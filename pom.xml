@@ -21,6 +21,14 @@
     </properties>
 
     <dependencies>
+        <!-- Prometheus Java Client (simpleclient only, no HTTP server) -->
+        <!-- SDK只收集指标，暴露由集成应用决定 -->
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>simpleclient</artifactId>
+            <version>0.16.0</version>
+        </dependency>
+
         <!-- JUnit for unit testing -->
         <dependency>
             <groupId>junit</groupId>

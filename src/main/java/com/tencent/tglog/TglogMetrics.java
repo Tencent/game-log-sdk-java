@@ -1,98 +1,216 @@
 package com.tencent.tglog;
 
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.LongAdder;
+import io.prometheus.client.Counter;
+import io.prometheus.client.Gauge;
+import io.prometheus.client.CollectorRegistry;
 
 /**
- * Performance metrics for TGLog client.
+ * Performance metrics for TGLog client using Prometheus Java Client.
  *
- * This class tracks various performance counters and gauges using
- * lock-free atomic operations for thread-safety.
+ * This class tracks various performance counters and gauges using Prometheus metrics.
+ * The metrics are registered with a CollectorRegistry which can be exposed by the
+ * application integrating this SDK.
+ *
+ * Design principles:
+ * - SDK only collects metrics, exposure is decided by the integrating application
+ * - Uses Prometheus standard metric types (Counter, Gauge)
+ * - Thread-safe by design (Prometheus client handles concurrency)
+ * - Backward compatible API for existing code
  */
 public class TglogMetrics {
 
+    private final CollectorRegistry registry;
+
     // ========== Counter Metrics (累计计数) ==========
-    private final LongAdder requestMsgCount = new LongAdder();      // 请求发送的消息数
-    private final LongAdder enqueuedMsgCount = new LongAdder();     // 成功入队的消息数
-    private final LongAdder dequeuedMsgCount = new LongAdder();     // 成功出队的消息数
-    private final LongAdder succeededMsgCount = new LongAdder();    // 成功发送的消息数
-    private final LongAdder failedMsgCount = new LongAdder();       // 失败的消息数
-    private final LongAdder timeoutMsgCount = new LongAdder();      // 超时的消息数
-    private final LongAdder retryMsgCount = new LongAdder();        // 重试次数
-    private final LongAdder droppedMsgCount = new LongAdder();      // 丢弃的消息数
+    private final Counter requestMsgCount;
+    private final Counter enqueuedMsgCount;
+    private final Counter dequeuedMsgCount;
+    private final Counter succeededMsgCount;
+    private final Counter failedMsgCount;
+    private final Counter timeoutMsgCount;
+    private final Counter retryMsgCount;
+    private final Counter droppedMsgCount;
 
-    private final LongAdder openedConnCount = new LongAdder();      // 打开的连接数
-    private final LongAdder closedConnCount = new LongAdder();      // 关闭的连接数
-    private final LongAdder errorConnCount = new LongAdder();       // 错误的连接数
+    private final Counter openedConnCount;
+    private final Counter closedConnCount;
+    private final Counter errorConnCount;
 
-    private final LongAdder addEndpointCount = new LongAdder();     // 添加端点次数
-    private final LongAdder removeEndpointCount = new LongAdder();  // 移除端点次数
+    private final Counter addEndpointCount;
+    private final Counter removeEndpointCount;
 
-    // Additional metrics (like C version)
-    private final LongAdder rescuedMsgBytes = new LongAdder();      // 抢救的数据字节数
+    private final Counter rescuedMsgBytes;
 
     // ========== Gauge Metrics (瞬时状态) ==========
-    private final AtomicLong msgQueueSize = new AtomicLong(0);      // 当前队列大小
-    private final AtomicLong msgQueueCapacity = new AtomicLong(0);  // 队列容量
-    private final AtomicLong endpointCount = new AtomicLong(0);     // 当前端点数量
-    private final AtomicLong activeConnCount = new AtomicLong(0);   // 活跃连接数
+    private final Gauge msgQueueSize;
+    private final Gauge msgQueueCapacity;
+    private final Gauge endpointCount;
+    private final Gauge activeConnCount;
+
+    /**
+     * Create TglogMetrics with default CollectorRegistry.
+     */
+    public TglogMetrics() {
+        this(CollectorRegistry.defaultRegistry);
+    }
+
+    /**
+     * Create TglogMetrics with custom CollectorRegistry.
+     * This allows applications to use separate registries for different purposes.
+     *
+     * @param registry The CollectorRegistry to register metrics with
+     */
+    public TglogMetrics(CollectorRegistry registry) {
+        this.registry = registry;
+
+        // Initialize Counter metrics
+        this.requestMsgCount = Counter.build()
+                .name("tglog_request_messages_total")
+                .help("Total number of messages requested to send")
+                .register(registry);
+
+        this.enqueuedMsgCount = Counter.build()
+                .name("tglog_enqueued_messages_total")
+                .help("Total number of messages successfully enqueued")
+                .register(registry);
+
+        this.dequeuedMsgCount = Counter.build()
+                .name("tglog_dequeued_messages_total")
+                .help("Total number of messages successfully dequeued")
+                .register(registry);
+
+        this.succeededMsgCount = Counter.build()
+                .name("tglog_succeeded_messages_total")
+                .help("Total number of messages successfully sent")
+                .register(registry);
+
+        this.failedMsgCount = Counter.build()
+                .name("tglog_failed_messages_total")
+                .help("Total number of messages failed to send")
+                .register(registry);
+
+        this.timeoutMsgCount = Counter.build()
+                .name("tglog_timeout_messages_total")
+                .help("Total number of messages timed out")
+                .register(registry);
+
+        this.retryMsgCount = Counter.build()
+                .name("tglog_retry_messages_total")
+                .help("Total number of message retries")
+                .register(registry);
+
+        this.droppedMsgCount = Counter.build()
+                .name("tglog_dropped_messages_total")
+                .help("Total number of messages dropped (queue full)")
+                .register(registry);
+
+        this.openedConnCount = Counter.build()
+                .name("tglog_opened_connections_total")
+                .help("Total number of connections opened")
+                .register(registry);
+
+        this.closedConnCount = Counter.build()
+                .name("tglog_closed_connections_total")
+                .help("Total number of connections closed")
+                .register(registry);
+
+        this.errorConnCount = Counter.build()
+                .name("tglog_error_connections_total")
+                .help("Total number of connection errors")
+                .register(registry);
+
+        this.addEndpointCount = Counter.build()
+                .name("tglog_add_endpoints_total")
+                .help("Total number of endpoints added")
+                .register(registry);
+
+        this.removeEndpointCount = Counter.build()
+                .name("tglog_remove_endpoints_total")
+                .help("Total number of endpoints removed")
+                .register(registry);
+
+        this.rescuedMsgBytes = Counter.build()
+                .name("tglog_rescued_message_bytes_total")
+                .help("Total bytes of rescued messages")
+                .register(registry);
+
+        // Initialize Gauge metrics
+        this.msgQueueSize = Gauge.build()
+                .name("tglog_message_queue_size")
+                .help("Current size of the message queue")
+                .register(registry);
+
+        this.msgQueueCapacity = Gauge.build()
+                .name("tglog_message_queue_capacity")
+                .help("Capacity of the message queue")
+                .register(registry);
+
+        this.endpointCount = Gauge.build()
+                .name("tglog_endpoints")
+                .help("Current number of endpoints")
+                .register(registry);
+
+        this.activeConnCount = Gauge.build()
+                .name("tglog_active_connections")
+                .help("Current number of active connections")
+                .register(registry);
+    }
 
     // ========== Counter Increments ==========
 
     public void incrementRequestMsg() {
-        requestMsgCount.increment();
+        requestMsgCount.inc();
     }
 
     public void incrementEnqueuedMsg() {
-        enqueuedMsgCount.increment();
+        enqueuedMsgCount.inc();
     }
 
     public void incrementDequeuedMsg() {
-        dequeuedMsgCount.increment();
+        dequeuedMsgCount.inc();
     }
 
     public void incrementSucceededMsg() {
-        succeededMsgCount.increment();
+        succeededMsgCount.inc();
     }
 
     public void incrementFailedMsg() {
-        failedMsgCount.increment();
+        failedMsgCount.inc();
     }
 
     public void incrementTimeoutMsg() {
-        timeoutMsgCount.increment();
+        timeoutMsgCount.inc();
     }
 
     public void incrementRetryMsg() {
-        retryMsgCount.increment();
+        retryMsgCount.inc();
     }
 
     public void incrementDroppedMsg() {
-        droppedMsgCount.increment();
+        droppedMsgCount.inc();
     }
 
     public void incrementOpenedConn() {
-        openedConnCount.increment();
+        openedConnCount.inc();
     }
 
     public void incrementClosedConn() {
-        closedConnCount.increment();
+        closedConnCount.inc();
     }
 
     public void incrementErrorConn() {
-        errorConnCount.increment();
+        errorConnCount.inc();
     }
 
     public void incrementAddEndpoint() {
-        addEndpointCount.increment();
+        addEndpointCount.inc();
     }
 
     public void incrementRemoveEndpoint() {
-        removeEndpointCount.increment();
+        removeEndpointCount.inc();
     }
 
     public void addRescuedMsgBytes(long bytes) {
-        rescuedMsgBytes.add(bytes);
+        rescuedMsgBytes.inc(bytes);
     }
 
     // ========== Gauge Updates ==========
@@ -116,75 +234,75 @@ public class TglogMetrics {
     // ========== Getters ==========
 
     public long getRequestMsgCount() {
-        return requestMsgCount.sum();
+        return (long) requestMsgCount.get();
     }
 
     public long getEnqueuedMsgCount() {
-        return enqueuedMsgCount.sum();
+        return (long) enqueuedMsgCount.get();
     }
 
     public long getDequeuedMsgCount() {
-        return dequeuedMsgCount.sum();
+        return (long) dequeuedMsgCount.get();
     }
 
     public long getSucceededMsgCount() {
-        return succeededMsgCount.sum();
+        return (long) succeededMsgCount.get();
     }
 
     public long getFailedMsgCount() {
-        return failedMsgCount.sum();
+        return (long) failedMsgCount.get();
     }
 
     public long getTimeoutMsgCount() {
-        return timeoutMsgCount.sum();
+        return (long) timeoutMsgCount.get();
     }
 
     public long getRetryMsgCount() {
-        return retryMsgCount.sum();
+        return (long) retryMsgCount.get();
     }
 
     public long getDroppedMsgCount() {
-        return droppedMsgCount.sum();
+        return (long) droppedMsgCount.get();
     }
 
     public long getOpenedConnCount() {
-        return openedConnCount.sum();
+        return (long) openedConnCount.get();
     }
 
     public long getClosedConnCount() {
-        return closedConnCount.sum();
+        return (long) closedConnCount.get();
     }
 
     public long getErrorConnCount() {
-        return errorConnCount.sum();
+        return (long) errorConnCount.get();
     }
 
     public long getAddEndpointCount() {
-        return addEndpointCount.sum();
+        return (long) addEndpointCount.get();
     }
 
     public long getRemoveEndpointCount() {
-        return removeEndpointCount.sum();
+        return (long) removeEndpointCount.get();
     }
 
     public long getRescuedMsgBytes() {
-        return rescuedMsgBytes.sum();
+        return (long) rescuedMsgBytes.get();
     }
 
     public long getMsgQueueSize() {
-        return msgQueueSize.get();
+        return (long) msgQueueSize.get();
     }
 
     public long getMsgQueueCapacity() {
-        return msgQueueCapacity.get();
+        return (long) msgQueueCapacity.get();
     }
 
     public long getEndpointCount() {
-        return endpointCount.get();
+        return (long) endpointCount.get();
     }
 
     public long getActiveConnCount() {
-        return activeConnCount.get();
+        return (long) activeConnCount.get();
     }
 
     // ========== Derived Metrics ==========
@@ -213,6 +331,16 @@ public class TglogMetrics {
             return 0.0;
         }
         return (double) getMsgQueueSize() / capacity;
+    }
+
+    /**
+     * Get the CollectorRegistry used by this metrics instance.
+     * Applications can use this to expose metrics via HTTP endpoint.
+     *
+     * @return The CollectorRegistry
+     */
+    public CollectorRegistry getRegistry() {
+        return registry;
     }
 
     // ========== JSON Output ==========

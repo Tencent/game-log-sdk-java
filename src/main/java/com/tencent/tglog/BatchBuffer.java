@@ -108,11 +108,7 @@ class BatchBuffer {
 
         // Check timeout
         long age = System.currentTimeMillis() - createTime;
-        if (age >= maxDelayMs) {
-            return true;
-        }
-
-        return false;
+        return age >= maxDelayMs;
     }
 
     /**
