@@ -1,0 +1,600 @@
+package com.tencent.tglog;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.StandardSocketOptions;
+import java.nio.ByteBuffer;
+import java.nio.channels.DatagramChannel;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
+import java.util.LinkedList;
+import java.util.Queue;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Represents a single network connection (TCP or UDP).
+ *
+ * This class handles:
+ * - Non-blocking I/O operations
+ * - Connection lifecycle management
+ * - Automatic reconnection
+ * - Send buffer management
+ */
+class TglogConnection {
+
+    enum State {
+        DISCONNECTED,
+        CONNECTING,
+        CONNECTED,
+        ERROR
+    }
+
+    private final TglogConfig.Protocol protocol;
+    private final InetSocketAddress endpoint;
+    private final TglogConfig config;
+    private final TglogLogger logger;
+
+    private SocketChannel tcpChannel;
+    private DatagramChannel udpChannel;
+    private SelectionKey selectionKey;
+
+    private volatile State state = State.DISCONNECTED;
+    private final AtomicLong connectTime = new AtomicLong(0);
+    private final AtomicLong lastActiveTime = new AtomicLong(0);
+    private int retryCount = 0;
+    private long lastRetryAttemptTime = 0;
+    private final Backoff connectionBackoff = Backoff.CONNECTION_RETRY;
+
+    // Output buffer for partial writes (similar to C's bufferevent)
+    // Ensures data integrity by keeping unsent data bound to this connection
+    private final Queue<ByteBuffer> outputBuffer = new LinkedList<>();
+    private static final int MAX_OUTPUT_BUFFER_SIZE = 32 * 1024 * 1024; // 32MB like C version
+    private int outputBufferSize = 0;
+
+    public TglogConnection(InetSocketAddress endpoint, TglogConfig config, TglogLogger logger) {
+        this.endpoint = endpoint;
+        this.protocol = config.getProtocol();
+        this.config = config;
+        this.logger = logger != null ? logger : new TglogLogger.NoOpLogger();
+    }
+
+    /**
+     * Connect to the remote endpoint (non-blocking).
+     *
+     * @param selector NIO selector for registration
+     * @throws IOException if connection fails
+     */
+    public void connect(Selector selector) throws IOException {
+        if (state == State.CONNECTED || state == State.CONNECTING) {
+            return;
+        }
+
+        try {
+            if (protocol == TglogConfig.Protocol.TCP) {
+                state = State.CONNECTING;
+                logger.log(TglogLogger.Level.INFO, "Connecting to " + endpoint);
+                connectTcp(selector);
+            } else {
+                // UDP connects immediately
+                connectUdp(selector);
+                logger.log(TglogLogger.Level.INFO, "Connected to " + endpoint + " (UDP)");
+            }
+        } catch (IOException e) {
+            state = State.ERROR;
+            retryCount++;
+            throw e;
+        }
+    }
+
+    private void connectTcp(Selector selector) throws IOException {
+        tcpChannel = SocketChannel.open();
+        tcpChannel.configureBlocking(false);
+
+        // Set socket options
+        // tcpChannel.setOption(StandardSocketOptions.TCP_NODELAY, true);
+        tcpChannel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
+        tcpChannel.setOption(StandardSocketOptions.SO_SNDBUF, config.getSocketSendBufferSize());
+        tcpChannel.setOption(StandardSocketOptions.SO_RCVBUF, config.getSocketRecvBufferSize());
+
+        // Start connection
+        boolean connected = tcpChannel.connect(endpoint);
+        if (connected) {
+            finishConnect();
+        } else {
+            // Register for connect completion
+            selectionKey = tcpChannel.register(selector, SelectionKey.OP_CONNECT, this);
+        }
+    }
+
+    private void connectUdp(Selector selector) throws IOException {
+        udpChannel = DatagramChannel.open();
+        udpChannel.configureBlocking(false);
+
+        // Set socket options
+        udpChannel.setOption(StandardSocketOptions.SO_SNDBUF, config.getSocketSendBufferSize());
+        udpChannel.setOption(StandardSocketOptions.SO_RCVBUF, config.getSocketRecvBufferSize());
+
+        // Connect to endpoint (for UDP this just sets the default destination)
+        udpChannel.connect(endpoint);
+
+        // Register for write operations
+        selectionKey = udpChannel.register(selector, SelectionKey.OP_WRITE, this);
+
+        // UDP is immediately "connected"
+        finishConnect();
+    }
+
+    /**
+     * Finish the connection process (called when OP_CONNECT is ready).
+     *
+     * @return true if connection completed successfully
+     */
+    public boolean finishConnect() {
+        try {
+            if (protocol == TglogConfig.Protocol.TCP) {
+                if (tcpChannel.finishConnect()) {
+                    state = State.CONNECTED;
+                    connectTime.set(System.currentTimeMillis());
+                    lastActiveTime.set(System.currentTimeMillis());
+                    retryCount = 0;
+
+                    // Switch to write interest
+                    if (selectionKey != null) {
+                        selectionKey.interestOps(SelectionKey.OP_WRITE);
+                    }
+
+                    logger.log(TglogLogger.Level.INFO, "Connected to " + endpoint);
+                    return true;
+                }
+            } else {
+                // UDP is always "connected"
+                state = State.CONNECTED;
+                connectTime.set(System.currentTimeMillis());
+                lastActiveTime.set(System.currentTimeMillis());
+                retryCount = 0;
+                return true;
+            }
+        } catch (IOException e) {
+            logger.log(TglogLogger.Level.ERROR, "Failed to finish connection to " + endpoint, e);
+            state = State.ERROR;
+            retryCount++;
+        }
+        return false;
+    }
+
+    /**
+     * Send data through this connection.
+     * Handles partial writes by buffering unsent data (like C's bufferevent).
+     *
+     * @param buffer Data to send
+     * @return Number of bytes that were accepted (may be buffered), or -1 on error
+     */
+    public int send(ByteBuffer buffer) throws IOException {
+        if (state != State.CONNECTED) {
+            return -1;
+        }
+
+        int originalRemaining = buffer.remaining();
+
+        try {
+            // First, try to flush any buffered data
+            if (!outputBuffer.isEmpty()) {
+                flushOutputBuffer();
+            }
+
+            // If output buffer is not empty after flush, buffer this data too
+            if (!outputBuffer.isEmpty()) {
+                // Check buffer size limit
+                if (outputBufferSize + originalRemaining > MAX_OUTPUT_BUFFER_SIZE) {
+                    logger.log(TglogLogger.Level.ERROR,
+                            "Output buffer full: " + outputBufferSize + " bytes");
+                    return -1;
+                }
+
+                // Buffer the data
+                ByteBuffer copy = ByteBuffer.allocate(originalRemaining);
+                copy.put(buffer);
+                copy.flip();
+                outputBuffer.offer(copy);
+                outputBufferSize += originalRemaining;
+
+                logger.log(TglogLogger.Level.DEBUG,
+                        "Buffered " + originalRemaining + " bytes (total buffered: " +
+                        outputBufferSize + ")");
+
+                return originalRemaining; // Data accepted (buffered)
+            }
+
+            // Try to send directly
+            int sent;
+            if (protocol == TglogConfig.Protocol.TCP) {
+                sent = tcpChannel.write(buffer);
+            } else {
+                sent = udpChannel.write(buffer);
+            }
+
+            if (sent > 0) {
+                lastActiveTime.set(System.currentTimeMillis());
+            }
+
+            // Handle partial write - buffer remaining data
+            if (buffer.hasRemaining()) {
+                int remaining = buffer.remaining();
+
+                logger.log(TglogLogger.Level.DEBUG,
+                        "Partial write: sent " + sent + " bytes, buffering " +
+                        remaining + " bytes");
+
+                // Copy remaining data to output buffer
+                ByteBuffer copy = ByteBuffer.allocate(remaining);
+                copy.put(buffer);
+                copy.flip();
+                outputBuffer.offer(copy);
+                outputBufferSize += remaining;
+
+                return originalRemaining; // All data accepted (some buffered)
+            }
+
+            return sent; // All data sent directly
+        } catch (IOException e) {
+            logger.log(TglogLogger.Level.ERROR, "Failed to send data to " + endpoint, e);
+            state = State.ERROR;
+            throw e;
+        }
+    }
+
+    /**
+     * Send multiple buffers (gathering write for TCP).
+     * Handles partial writes by buffering unsent data (like C's bufferevent).
+     *
+     * @param buffers Array of buffers to send
+     * @return Number of bytes that were accepted (may be buffered), or -1 on error
+     */
+    public long send(ByteBuffer[] buffers) throws IOException {
+        if (state != State.CONNECTED) {
+            return -1;
+        }
+
+        // Calculate total size
+        long totalSize = 0;
+        for (ByteBuffer buf : buffers) {
+            totalSize += buf.remaining();
+        }
+
+        try {
+            // First, try to flush any buffered data
+            if (!outputBuffer.isEmpty()) {
+                flushOutputBuffer();
+            }
+
+            // If output buffer is not empty after flush, buffer all data
+            if (!outputBuffer.isEmpty()) {
+                // Check buffer size limit
+                if (outputBufferSize + totalSize > MAX_OUTPUT_BUFFER_SIZE) {
+                    logger.log(TglogLogger.Level.ERROR,
+                            "Output buffer full: " + outputBufferSize + " bytes");
+                    return -1;
+                }
+
+                // Buffer all data
+                for (ByteBuffer buf : buffers) {
+                    if (buf.hasRemaining()) {
+                        ByteBuffer copy = ByteBuffer.allocate(buf.remaining());
+                        copy.put(buf);
+                        copy.flip();
+                        outputBuffer.offer(copy);
+                        outputBufferSize += copy.remaining();
+                    }
+                }
+
+                logger.log(TglogLogger.Level.DEBUG,
+                        "Buffered " + totalSize + " bytes (total buffered: " +
+                        outputBufferSize + ")");
+
+                return totalSize; // All data accepted (buffered)
+            }
+
+            // Try to send directly
+            long sent;
+            if (protocol == TglogConfig.Protocol.TCP) {
+                sent = tcpChannel.write(buffers);
+            } else {
+                // UDP doesn't support gathering write, send first buffer only
+                sent = udpChannel.write(buffers[0]);
+            }
+
+            if (sent > 0) {
+                lastActiveTime.set(System.currentTimeMillis());
+            }
+
+            // Check if all data was sent
+            boolean hasRemaining = false;
+            for (ByteBuffer buf : buffers) {
+                if (buf.hasRemaining()) {
+                    hasRemaining = true;
+                    break;
+                }
+            }
+
+            // Handle partial write - buffer remaining data
+            if (hasRemaining) {
+                long remaining = 0;
+                for (ByteBuffer buf : buffers) {
+                    if (buf.hasRemaining()) {
+                        int bufRemaining = buf.remaining();
+                        remaining += bufRemaining;
+
+                        // Copy remaining data to output buffer
+                        ByteBuffer copy = ByteBuffer.allocate(bufRemaining);
+                        copy.put(buf);
+                        copy.flip();
+                        outputBuffer.offer(copy);
+                        outputBufferSize += bufRemaining;
+                    }
+                }
+
+                logger.log(TglogLogger.Level.DEBUG,
+                        "Partial write: sent " + sent + " bytes, buffering " +
+                        remaining + " bytes");
+
+                return totalSize; // All data accepted (some buffered)
+            }
+
+            return sent; // All data sent directly
+        } catch (IOException e) {
+            logger.log(TglogLogger.Level.ERROR, "Failed to send data to " + endpoint, e);
+            state = State.ERROR;
+            throw e;
+        }
+    }
+
+    /**
+     * Flush output buffer (try to send buffered data).
+     * Called automatically when sending new data or when connection becomes writable.
+     */
+    private void flushOutputBuffer() throws IOException {
+        while (!outputBuffer.isEmpty()) {
+            ByteBuffer buf = outputBuffer.peek();
+            if (buf == null || !buf.hasRemaining()) {
+                outputBuffer.poll();
+                continue;
+            }
+
+            int sent;
+            if (protocol == TglogConfig.Protocol.TCP) {
+                sent = tcpChannel.write(buf);
+            } else {
+                sent = udpChannel.write(buf);
+            }
+
+            if (sent > 0) {
+                lastActiveTime.set(System.currentTimeMillis());
+                outputBufferSize -= sent;
+            }
+
+            // If buffer not fully sent, stop (socket buffer full)
+            if (buf.hasRemaining()) {
+                break;
+            }
+
+            // Buffer fully sent, remove from queue
+            outputBuffer.poll();
+        }
+    }
+
+    /**
+     * Check if connection has buffered data waiting to be sent.
+     */
+    public boolean hasBufferedData() {
+        return !outputBuffer.isEmpty();
+    }
+
+    /**
+     * Get size of buffered data.
+     */
+    public int getBufferedDataSize() {
+        return outputBufferSize;
+    }
+
+    /**
+     * Try to flush buffered data (called when connection is writable).
+     * This is called by the event loop when the connection becomes writable.
+     */
+    public void tryFlush() {
+        if (!outputBuffer.isEmpty() && state == State.CONNECTED) {
+            try {
+                flushOutputBuffer();
+            } catch (IOException e) {
+                logger.log(TglogLogger.Level.ERROR, "Failed to flush output buffer", e);
+                state = State.ERROR;
+            }
+        }
+    }
+
+    /**
+     * Get pending data from output buffer (for rescue when closing).
+     * Returns a list of ByteBuffers containing unsent data.
+     * The buffers are removed from the output buffer.
+     */
+    public Queue<ByteBuffer> getPendingData() {
+        if (outputBuffer.isEmpty()) {
+            return null;
+        }
+
+        // Return a copy of the output buffer
+        Queue<ByteBuffer> pending = new LinkedList<>(outputBuffer);
+        return pending;
+    }
+
+    /**
+     * Remove pending data from output buffer.
+     * This is called when data is being rescued to another connection.
+     */
+    public Queue<ByteBuffer> removePendingData() {
+        if (outputBuffer.isEmpty()) {
+            return null;
+        }
+
+        Queue<ByteBuffer> pending = new LinkedList<>(outputBuffer);
+        outputBuffer.clear();
+        outputBufferSize = 0;
+        return pending;
+    }
+
+    /**
+     * Write pending data from another connection (for rescue).
+     * This is used to transfer unsent data from a closing connection.
+     */
+    public boolean writePendingData(Queue<ByteBuffer> pendingData) {
+        if (pendingData == null || pendingData.isEmpty()) {
+            return true;
+        }
+
+        // Calculate total size
+        int totalSize = 0;
+        for (ByteBuffer buf : pendingData) {
+            totalSize += buf.remaining();
+        }
+
+        // Check if we have space
+        if (outputBufferSize + totalSize > MAX_OUTPUT_BUFFER_SIZE) {
+            logger.log(TglogLogger.Level.ERROR,
+                    "Cannot rescue pending data: output buffer would exceed limit (" +
+                    (outputBufferSize + totalSize) + " > " + MAX_OUTPUT_BUFFER_SIZE + ")");
+            return false;
+        }
+
+        // Add all pending buffers to output buffer
+        for (ByteBuffer buf : pendingData) {
+            if (buf.hasRemaining()) {
+                outputBuffer.offer(buf);
+                outputBufferSize += buf.remaining();
+            }
+        }
+
+        logger.log(TglogLogger.Level.INFO,
+                "Rescued " + totalSize + " bytes of pending data from another connection");
+
+        return true;
+    }
+
+    /**
+     * Close the connection.
+     */
+    public void close() {
+        state = State.DISCONNECTED;
+
+        try {
+            if (selectionKey != null) {
+                selectionKey.cancel();
+                selectionKey = null;
+            }
+
+            if (tcpChannel != null) {
+                tcpChannel.close();
+                tcpChannel = null;
+            }
+
+            if (udpChannel != null) {
+                udpChannel.close();
+                udpChannel = null;
+            }
+
+            // Clear output buffer to prevent memory leak
+            outputBuffer.clear();
+            outputBufferSize = 0;
+
+            logger.log(TglogLogger.Level.INFO, "Closed connection to " + endpoint);
+        } catch (IOException e) {
+            logger.log(TglogLogger.Level.ERROR, "Error closing connection to " + endpoint, e);
+        }
+    }
+
+    /**
+     * Check if connection is expired based on lifetime.
+     *
+     * @return true if connection should be closed
+     */
+    public boolean isExpired() {
+        if (state != State.CONNECTED) {
+            return false;
+        }
+        long lifetime = System.currentTimeMillis() - connectTime.get();
+        return lifetime > config.getMaxConnectionLifetime() * 1000L;
+    }
+
+    /**
+     * Check if connection is writable.
+     *
+     * @return true if ready to send data
+     */
+    public boolean isWritable() {
+        if (state != State.CONNECTED) {
+            return false;
+        }
+
+        // UDP is always writable when connected (unless buffer is full)
+        if (protocol == TglogConfig.Protocol.UDP) {
+            return outputBufferSize < MAX_OUTPUT_BUFFER_SIZE;
+        }
+
+        // TCP needs to check selection key
+        return selectionKey != null &&
+                selectionKey.isValid() &&
+                selectionKey.isWritable();
+    }
+
+    // Getters
+
+    public State getState() {
+        return state;
+    }
+
+    public boolean isConnected() {
+        return state == State.CONNECTED;
+    }
+
+    public InetSocketAddress getEndpoint() {
+        return endpoint;
+    }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    /**
+     * Check if enough time has passed for next connection retry.
+     */
+    public boolean shouldRetryConnection() {
+        if (lastRetryAttemptTime == 0) {
+            return true;
+        }
+        return connectionBackoff.shouldRetry(lastRetryAttemptTime, retryCount);
+    }
+
+    /**
+     * Mark that a connection retry was attempted.
+     */
+    public void markRetryAttempt() {
+        lastRetryAttemptTime = System.currentTimeMillis();
+    }
+
+    public long getConnectTime() {
+        return connectTime.get();
+    }
+
+    public long getLastActiveTime() {
+        return lastActiveTime.get();
+    }
+
+    public SelectionKey getSelectionKey() {
+        return selectionKey;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("TglogConnection{endpoint=%s, protocol=%s, state=%s, retries=%d}",
+                endpoint, protocol, state, retryCount);
+    }
+}
