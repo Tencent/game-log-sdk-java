@@ -79,12 +79,9 @@ class TglogWorker implements Runnable {
         value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR",
         justification = "Selector is initialized in run() method before any use")
     private Selector selector;
-    private Thread workerThread;
 
     // Timers and intervals
     private long lastBatchTime = 0;
-    private long lastEndpointRecoverTime = 0;
-    private long lastConnectionReplaceTime = 0;
     private long lastEmergencySupplementTime = 0;
 
     // Retry management
@@ -155,7 +152,7 @@ class TglogWorker implements Runnable {
     public void start() {
         logger.info("Worker {} starting thread, initialEndpoints={}", workerId, (initialEndpoints == null ? "null" : initialEndpoints.size()));
 
-        workerThread = new Thread(this, "TglogWorker-" + workerId);
+        Thread workerThread = new Thread(this, "TglogWorker-" + workerId);
         workerThread.setDaemon(false);
         workerThread.start();
 
@@ -341,8 +338,8 @@ class TglogWorker implements Runnable {
      */
     private void runEventLoop() {
         lastBatchTime = System.currentTimeMillis();
-        lastEndpointRecoverTime = System.currentTimeMillis();
-        lastConnectionReplaceTime = System.currentTimeMillis();
+        long lastEndpointRecoverTime = System.currentTimeMillis();
+        long lastConnectionReplaceTime = System.currentTimeMillis();
         lastEmergencySupplementTime = 0; // Allow first supplement immediately
 
         while (state == State.READY) {
