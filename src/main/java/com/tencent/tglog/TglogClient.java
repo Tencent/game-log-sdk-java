@@ -155,9 +155,9 @@ public class TglogClient implements AutoCloseable {
             throw new TglogException(TglogErrorCode.BAD_LOG, "Log payload cannot be null or empty");
         }
 
-        // Ensure message ends with newline
+        // Validate message ends with newline (required by protocol)
         if (!logPayload.endsWith("\n")) {
-            logPayload += "\n";
+            throw new TglogException(TglogErrorCode.BAD_LOG, "Log payload must end with '\\n'");
         }
 
         // Create log message (which will cache the payload size)
