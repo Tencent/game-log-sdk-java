@@ -64,7 +64,7 @@ public class TglogClientTest {
         String[] logs = new String[Math.min(testConfig.messageCount, 10000)];
         long timestamp = System.currentTimeMillis();
         for (int i = 0; i < logs.length; i++) {
-            logs[i] = "gametest|userid=" + i + "|action=battle|result=win|score=100|timestamp=" + timestamp + "\n";
+            logs[i] = "gametest|userid=" + i + "|CarryOutItemFlow|/cnprod-a/36/settlementsvr/nanjing/11.176.45.170/1|2025-07-14 13:39:23|wx39308a0a1bd83d22|1|36|18182882159345025898|18182882159345025898|2340077323481036542|11090000053|1|648520772929162293|0|4|0.100|109|1|0|||0|0|||648530419497318933|2340077323481036542||ts=" + timestamp + "\n";
         }
         System.out.println("Test data prepared");
 
