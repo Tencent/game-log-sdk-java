@@ -35,6 +35,30 @@ class TglogWorker implements Runnable {
         CLOSED      // Worker is closed
     }
 
+    /**
+     * Internal result class for send operations.
+     * Used to avoid exceptions in hot path while maintaining type safety.
+     */
+    private static class SendResult {
+        final TglogErrorCode errorCode;
+
+        SendResult(TglogErrorCode errorCode) {
+            this.errorCode = errorCode;
+        }
+
+        boolean isOk() {
+            return errorCode == TglogErrorCode.OK;
+        }
+
+        static SendResult ok() {
+            return new SendResult(TglogErrorCode.OK);
+        }
+
+        static SendResult error(TglogErrorCode errorCode) {
+            return new SendResult(errorCode);
+        }
+    }
+
     // Worker identification
     private final int workerId;
     private final TglogConfig config;
@@ -577,13 +601,13 @@ class TglogWorker implements Runnable {
                 }
                 // Retry timeout - fail the batch
                 logger.warn("Worker {} batch retry timeout", workerId);
-                failCurrentBatch(TglogException.ERR_SEND_TIMEOUT);
+                failCurrentBatch(TglogErrorCode.SEND_TIMEOUT);
             }
 
             // Check batch send timeout
             if (isBatchSendTimeout()) {
                 logger.warn("Worker {} batch send timeout", workerId);
-                failCurrentBatch(TglogException.ERR_SEND_TIMEOUT);
+                failCurrentBatch(TglogErrorCode.SEND_TIMEOUT);
             }
 
             // Send current batch if ready
@@ -723,17 +747,17 @@ class TglogWorker implements Runnable {
             return true;
         }
 
-        int errorCode = doSendBatch();
+        SendResult result = doSendBatch();
 
-        if (errorCode == TglogException.ERR_OK) {
+        if (result.isOk()) {
             // Success
-            completeBatch(TglogException.ERR_OK);
+            completeBatch(TglogErrorCode.OK);
             return true;
         }
 
         // Failed
         if (!retry) {
-            completeBatch(errorCode);
+            completeBatch(result.errorCode);
             return true;
         }
 
@@ -744,12 +768,12 @@ class TglogWorker implements Runnable {
     /**
      * Actually send the batch.
      */
-    private int doSendBatch() {
+    private SendResult doSendBatch() {
         // Get a connection
         TglogConnection conn = getConnection();
         if (conn == null) {
             logger.error("Worker {} no available connections", workerId);
-            return TglogException.ERR_NO_AVAILABLE_CONN;
+            return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
         }
 
         try {
@@ -766,14 +790,14 @@ class TglogWorker implements Runnable {
         } catch (IOException e) {
             logger.error("Worker {}{}", workerId, " send error", e);
             handleConnectionError(conn);
-            return TglogException.ERR_SEND_FAILED;
+            return SendResult.error(TglogErrorCode.SEND_FAILED);
         }
     }
 
     /**
      * Send batch via TCP.
      */
-    private int sendBatchTcp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
+    private SendResult sendBatchTcp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
         int tryCount = 0;
         long totalSize = 0;
         for (ByteBuffer buf : buffers) {
@@ -791,12 +815,12 @@ class TglogWorker implements Runnable {
                 if (tryCount < connections.size()) {
                     conn = getConnection();
                     if (conn == null) {
-                        return TglogException.ERR_NO_AVAILABLE_CONN;
+                        return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
                     }
                     continue;
                 }
 
-                return TglogException.ERR_SEND_FAILED;
+                return SendResult.error(TglogErrorCode.SEND_FAILED);
             }
 
             // Check if all sent
@@ -809,21 +833,21 @@ class TglogWorker implements Runnable {
             }
 
             if (allSent) {
-                return TglogException.ERR_OK;
+                return SendResult.ok();
             }
 
             // Partial send - data is buffered, consider it success
             logger.debug("Worker {} partial TCP send, data buffered", workerId);
-            return TglogException.ERR_OK;
+            return SendResult.ok();
         }
 
-        return TglogException.ERR_SEND_FAILED;
+        return SendResult.error(TglogErrorCode.SEND_FAILED);
     }
 
     /**
      * Send batch via UDP.
      */
-    private int sendBatchUdp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
+    private SendResult sendBatchUdp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
         // UDP sends first buffer only
         ByteBuffer buffer = buffers[0];
         // int totalSize = buffer.remaining(); // Unused, but kept for potential future logging
@@ -839,7 +863,7 @@ class TglogWorker implements Runnable {
                 if (tryCount < maxTries) {
                     conn = getConnection();
                     if (conn == null) {
-                        return TglogException.ERR_NO_AVAILABLE_CONN;
+                        return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
                     }
                     logger.debug("UDP send would block, trying another connection (attempt {}/{})",
                             (tryCount + 1), maxTries);
@@ -847,12 +871,12 @@ class TglogWorker implements Runnable {
                 }
 
                 handleConnectionError(conn);
-                return TglogException.ERR_SEND_FAILED;
+                return SendResult.error(TglogErrorCode.SEND_FAILED);
             }
 
             // UDP sends all or nothing - if sent > 0, all data was sent
             if (sent > 0) {
-                return TglogException.ERR_OK;
+                return SendResult.ok();
             }
 
             // sent == 0 means EAGAIN, try another connection
@@ -860,14 +884,14 @@ class TglogWorker implements Runnable {
             if (tryCount < maxTries) {
                 conn = getConnection();
                 if (conn == null) {
-                    return TglogException.ERR_NO_AVAILABLE_CONN;
+                    return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
                 }
                 logger.debug("UDP send would block (sent=0), trying another connection (attempt {}/{})",
                         (tryCount + 1), maxTries);
             }
         }
 
-        return TglogException.ERR_SEND_FAILED;
+        return SendResult.error(TglogErrorCode.SEND_FAILED);
     }
 
     /**
@@ -879,7 +903,7 @@ class TglogWorker implements Runnable {
         // Check max retries
         if (currentBatchRetries >= config.getMaxRetries()) {
             logger.warn("Worker {} max retries exceeded", workerId);
-            completeBatch(TglogException.ERR_SEND_TIMEOUT);
+            completeBatch(TglogErrorCode.SEND_TIMEOUT);
             return true;
         }
 
@@ -906,23 +930,22 @@ class TglogWorker implements Runnable {
     /**
      * Complete current batch (success or failure).
      */
-    private void completeBatch(int errorCode) {
+    private void completeBatch(TglogErrorCode errorCode) {
         if (currentBatch.isEmpty()) {
             return;
         }
 
         // Invoke callbacks
         int msgCount = currentBatch.size();
-        if (errorCode == TglogException.ERR_OK) {
+        if (errorCode == TglogErrorCode.OK) {
             currentBatch.notifyAndRemove(msgCount);
             for (int i = 0; i < msgCount; i++) {
                 metrics.incrementSucceededMsg();
             }
         } else {
-            String errorMsg = getErrorMessage(errorCode);
-            currentBatch.notifyAllFailed(errorCode, errorMsg);
+            currentBatch.notifyAllFailed(errorCode.getCode(), errorCode.getMessage());
 
-            if (errorCode == TglogException.ERR_SEND_TIMEOUT) {
+            if (errorCode == TglogErrorCode.SEND_TIMEOUT) {
                 for (int i = 0; i < msgCount; i++) {
                     metrics.incrementTimeoutMsg();
                 }
@@ -946,7 +969,7 @@ class TglogWorker implements Runnable {
     /**
      * Fail current batch.
      */
-    private void failCurrentBatch(int errorCode) {
+    private void failCurrentBatch(TglogErrorCode errorCode) {
         completeBatch(errorCode);
     }
 
@@ -1372,23 +1395,4 @@ class TglogWorker implements Runnable {
         logger.info("Worker {} cleanup complete", workerId);
     }
 
-    /**
-     * Get error message for error code.
-     */
-    private String getErrorMessage(int errorCode) {
-        switch (errorCode) {
-            case TglogException.ERR_OK:
-                return "Success";
-            case TglogException.ERR_SEND_FAILED:
-                return "Send failed";
-            case TglogException.ERR_SEND_TIMEOUT:
-                return "Send timeout";
-            case TglogException.ERR_NO_AVAILABLE_CONN:
-                return "No available connections";
-            case TglogException.ERR_PRODUCER_CLOSED:
-                return "Producer closed";
-            default:
-                return "Unknown error: " + errorCode;
-        }
-    }
 }

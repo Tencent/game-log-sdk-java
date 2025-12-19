@@ -5,44 +5,83 @@ package com.tencent.tglog;
  */
 public class TglogException extends Exception {
 
-    private final int errorCode;
+    private final TglogErrorCode errorCode;
 
-    public TglogException(String message) {
-        this(message, -1);
+    /**
+     * Create exception with error code.
+     * @param errorCode Error code
+     */
+    public TglogException(TglogErrorCode errorCode) {
+        super(errorCode.getMessage());
+        this.errorCode = errorCode;
     }
 
-    public TglogException(String message, int errorCode) {
+    /**
+     * Create exception with error code and custom message.
+     * @param errorCode Error code
+     * @param message Custom error message
+     */
+    public TglogException(TglogErrorCode errorCode, String message) {
         super(message);
         this.errorCode = errorCode;
     }
 
-    public TglogException(String message, Throwable cause) {
-        this(message, -1, cause);
+    /**
+     * Create exception with error code and cause.
+     * @param errorCode Error code
+     * @param cause Cause of the exception
+     */
+    public TglogException(TglogErrorCode errorCode, Throwable cause) {
+        super(errorCode.getMessage(), cause);
+        this.errorCode = errorCode;
     }
 
-    public TglogException(String message, int errorCode, Throwable cause) {
+    /**
+     * Create exception with error code, custom message, and cause.
+     * @param errorCode Error code
+     * @param message Custom error message
+     * @param cause Cause of the exception
+     */
+    public TglogException(TglogErrorCode errorCode, String message, Throwable cause) {
         super(message, cause);
         this.errorCode = errorCode;
     }
 
-    public int getErrorCode() {
+    /**
+     * Create exception with message (error code defaults to UNKNOWN).
+     * @param message Error message
+     */
+    public TglogException(String message) {
+        this(TglogErrorCode.UNKNOWN, message);
+    }
+
+    /**
+     * Create exception with message and cause (error code defaults to UNKNOWN).
+     * @param message Error message
+     * @param cause Cause of the exception
+     */
+    public TglogException(String message, Throwable cause) {
+        this(TglogErrorCode.UNKNOWN, message, cause);
+    }
+
+    /**
+     * Get the error code enum.
+     * @return Error code
+     */
+    public TglogErrorCode getErrorCode() {
         return errorCode;
     }
 
-    // Error codes (aligned with C version)
-    public static final int ERR_OK = 0;
-    public static final int ERR_SEND_TIMEOUT = 10001;
-    public static final int ERR_SEND_FAILED = 10002;
-    public static final int ERR_PRODUCER_CLOSED = 10003;
-    public static final int ERR_SEND_QUEUE_IS_FULL = 10004;
-    public static final int ERR_NO_AVAILABLE_CONN = 10005;
-    public static final int ERR_NEW_CONN_FAILED = 10006;
-    public static final int ERR_CONN_WRITE_FAILED = 10007;
-    public static final int ERR_CONN_READ_FAILED = 10008;
-    public static final int ERR_LOG_TOO_LONG = 10009;
-    public static final int ERR_BAD_LOG = 10010;
-    public static final int ERR_BATCH_SIZE_EXCEEDED = 10011;
-    public static final int ERR_MEMORY_ALLOC_FAILED = 10012;
-    public static final int ERR_WORKER_BUSY = 10013;
-    public static final int ERR_UNKNOWN = 20001;
+    /**
+     * Get the numeric error code.
+     * @return Numeric error code
+     */
+    public int getErrorCodeValue() {
+        return errorCode.getCode();
+    }
+
+    @Override
+    public String toString() {
+        return String.format("TglogException: %s - %s", errorCode, getMessage());
+    }
 }

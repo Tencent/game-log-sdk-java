@@ -145,23 +145,17 @@ public class TglogClient implements AutoCloseable {
      * @throws TglogException if client is closed or queue is full
      */
     public void send(String logPayload, TglogCallback callback) throws TglogException {
-        // Validate client state (like C version: check client first)
+        // Validate client state - synchronous validation errors only throw exception
         if (closed.get()) {
-            if (callback != null) {
-                callback.onError(logPayload, TglogException.ERR_PRODUCER_CLOSED, "Client is closed");
-            }
-            throw new TglogException("Client is closed", TglogException.ERR_PRODUCER_CLOSED);
+            throw new TglogException(TglogErrorCode.PRODUCER_CLOSED, "Client is closed");
         }
 
-        // Validate payload (like C version: invoke callback before throwing)
+        // Validate payload - synchronous validation errors only throw exception
         if (logPayload == null || logPayload.isEmpty()) {
-            if (callback != null) {
-                callback.onError(logPayload, TglogException.ERR_BAD_LOG, "Log payload cannot be null or empty");
-            }
-            throw new TglogException("Log payload cannot be null or empty", TglogException.ERR_BAD_LOG);
+            throw new TglogException(TglogErrorCode.BAD_LOG, "Log payload cannot be null or empty");
         }
 
-        // Ensure message ends with newline (like C version: check TGLOG_DELIMITER)
+        // Ensure message ends with newline
         if (!logPayload.endsWith("\n")) {
             logPayload += "\n";
         }
@@ -169,16 +163,13 @@ public class TglogClient implements AutoCloseable {
         // Create log message (which will cache the payload size)
         LogMessage message = new LogMessage(logPayload, callback);
 
-        // Check log payload length against protocol limits
+        // Check log payload length against protocol limits - synchronous validation
         int payloadLength = message.getPayloadSize();
         int maxRequestSize = config.getMaxRequestSize();
         if (payloadLength > maxRequestSize) {
             String errorMsg = "Log payload too long: " + payloadLength + " bytes exceeds " +
                     config.getProtocol() + " limit of " + maxRequestSize + " bytes";
-            if (callback != null) {
-                callback.onError(logPayload, TglogException.ERR_LOG_TOO_LONG, errorMsg);
-            }
-            throw new TglogException(errorMsg, TglogException.ERR_LOG_TOO_LONG);
+            throw new TglogException(TglogErrorCode.LOG_TOO_LONG, errorMsg);
         }
 
         // Update metrics
@@ -187,13 +178,11 @@ public class TglogClient implements AutoCloseable {
         // Select a worker (round-robin)
         TglogWorker worker = selectWorker();
 
-        // Enqueue message
+        // Enqueue message - synchronous enqueue failure throws exception
+        // Asynchronous send failures will be reported via callback
         if (!worker.enqueue(message)) {
             metrics.incrementDroppedMsg();
-            if (callback != null) {
-                callback.onError(logPayload, TglogException.ERR_SEND_QUEUE_IS_FULL, "Message queue is full");
-            }
-            throw new TglogException("Message queue is full", TglogException.ERR_SEND_QUEUE_IS_FULL);
+            throw new TglogException(TglogErrorCode.SEND_QUEUE_IS_FULL, "Message queue is full");
         }
     }
 

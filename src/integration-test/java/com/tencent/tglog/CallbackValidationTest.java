@@ -142,15 +142,14 @@ public class CallbackValidationTest {
             System.out.println("  ✓ Exception thrown: " + e.getMessage());
         }
 
-        latch.await(1, TimeUnit.SECONDS);
+        // For synchronous validation errors, callback should NOT be invoked
+        // Only the exception should be thrown
+        latch.await(100, TimeUnit.MILLISECONDS);
 
-        if (callbackInvoked.get() == 1) {
-            System.out.println("  ✓ Callback invoked: code=" + errorCode.get());
-            if (errorCode.get() == TglogException.ERR_LOG_TOO_LONG) {
-                System.out.println("  ✓ Correct error code: ERR_LOG_TOO_LONG");
-            }
+        if (callbackInvoked.get() == 0) {
+            System.out.println("  ✓ Callback not invoked (correct for sync validation error)");
         } else {
-            System.out.println("  ERROR: Callback not invoked!");
+            System.out.println("  ERROR: Callback should not be invoked for sync validation errors!");
         }
 
         System.out.println();
