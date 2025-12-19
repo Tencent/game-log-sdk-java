@@ -60,7 +60,6 @@ public class TglogConfig {
 
     // ========== Debug Configuration ==========
     private boolean debugEnabled = false;
-    private TglogLogger logger = null;
 
     /**
      * Create a new configuration with required parameters.
@@ -271,15 +270,6 @@ public class TglogConfig {
 
     public TglogConfig setDebugEnabled(boolean debugEnabled) {
         this.debugEnabled = debugEnabled;
-        return this;
-    }
-
-    public TglogLogger getLogger() {
-        return logger;
-    }
-
-    public TglogConfig setLogger(TglogLogger logger) {
-        this.logger = logger;
         return this;
     }
 

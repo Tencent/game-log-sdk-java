@@ -127,15 +127,17 @@ java/
 │   │   ├── TglogClient.java          (主客户端)
 │   │   ├── TglogWorker.java          (Worker线程)
 │   │   ├── TglogConnection.java      (连接管理)
-│   │   ├── TglogMetrics.java         (性能统计)
+│   │   ├── TglogMetrics.java         (性能统计 - 使用 Prometheus)
 │   │   ├── LockFreeQueue.java        (无锁队列)
 │   │   ├── BatchBuffer.java          (批次缓冲)
 │   │   ├── EndpointManager.java      (端点管理)
 │   │   ├── TglogConfig.java          (配置管理)
 │   │   ├── LogMessage.java           (消息封装)
 │   │   ├── TglogCallback.java        (回调接口)
-│   │   ├── TglogLogger.java          (日志接口)
+│   │   ├── Backoff.java              (退避策略)
 │   │   └── TglogException.java       (异常类)
+│   │
+│   │   注: 日志使用 SLF4J API
 │   │
 │   └── test/java/com/tencent/tglog/
 │       ├── TglogClientTest.java      (性能测试)

@@ -1,5 +1,8 @@
 package com.tencent.tglog;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.StandardSocketOptions;
@@ -26,6 +29,8 @@ import java.util.concurrent.atomic.AtomicLong;
     justification = "Queue.offer() return value ignored - queue is unbounded LinkedList, offer always succeeds")
 class TglogConnection {
 
+    private static final Logger logger = LoggerFactory.getLogger(TglogConnection.class);
+
     enum State {
         DISCONNECTED,
         CONNECTING,
@@ -36,7 +41,6 @@ class TglogConnection {
     private final TglogConfig.Protocol protocol;
     private final InetSocketAddress endpoint;
     private final TglogConfig config;
-    private final TglogLogger logger;
 
     private SocketChannel tcpChannel;
     private DatagramChannel udpChannel;
@@ -55,11 +59,10 @@ class TglogConnection {
     private static final int MAX_OUTPUT_BUFFER_SIZE = 32 * 1024 * 1024; // 32MB like C version
     private int outputBufferSize = 0;
 
-    public TglogConnection(InetSocketAddress endpoint, TglogConfig config, TglogLogger logger) {
+    public TglogConnection(InetSocketAddress endpoint, TglogConfig config) {
         this.endpoint = endpoint;
         this.protocol = config.getProtocol();
         this.config = config;
-        this.logger = logger != null ? logger : new TglogLogger.NoOpLogger();
     }
 
     /**
@@ -76,12 +79,12 @@ class TglogConnection {
         try {
             if (protocol == TglogConfig.Protocol.TCP) {
                 state = State.CONNECTING;
-                logger.log(TglogLogger.Level.INFO, "Connecting to " + endpoint);
+                logger.info("Connecting to {}", endpoint);
                 connectTcp(selector);
             } else {
                 // UDP connects immediately
                 connectUdp(selector);
-                logger.log(TglogLogger.Level.INFO, "Connected to " + endpoint + " (UDP)");
+                logger.info("Connected to {} (UDP)", endpoint);
             }
         } catch (IOException e) {
             state = State.ERROR;
@@ -147,7 +150,7 @@ class TglogConnection {
                         selectionKey.interestOps(SelectionKey.OP_WRITE);
                     }
 
-                    logger.log(TglogLogger.Level.INFO, "Connected to " + endpoint);
+                    logger.info("Connected to {}", endpoint);
                     return true;
                 }
             } else {
@@ -159,7 +162,7 @@ class TglogConnection {
                 return true;
             }
         } catch (IOException e) {
-            logger.log(TglogLogger.Level.ERROR, "Failed to finish connection to " + endpoint, e);
+            logger.error("Failed to finish connection to {}", endpoint, e);
             state = State.ERROR;
             retryCount++;
         }
@@ -190,8 +193,7 @@ class TglogConnection {
             if (!outputBuffer.isEmpty()) {
                 // Check buffer size limit
                 if (outputBufferSize + originalRemaining > MAX_OUTPUT_BUFFER_SIZE) {
-                    logger.log(TglogLogger.Level.ERROR,
-                            "Output buffer full: " + outputBufferSize + " bytes");
+                    logger.error("Output buffer full: {} bytes", outputBufferSize);
                     return -1;
                 }
 
@@ -203,9 +205,7 @@ class TglogConnection {
                 outputBuffer.offer(copy);
                 outputBufferSize += originalRemaining;
 
-                logger.log(TglogLogger.Level.DEBUG,
-                        "Buffered " + originalRemaining + " bytes (total buffered: " +
-                                outputBufferSize + ")");
+                logger.debug("Buffered {} bytes (total buffered: {})", originalRemaining, outputBufferSize);
 
                 return originalRemaining; // Data accepted (buffered)
             }
@@ -226,9 +226,7 @@ class TglogConnection {
             if (buffer.hasRemaining()) {
                 int remaining = buffer.remaining();
 
-                logger.log(TglogLogger.Level.DEBUG,
-                        "Partial write: sent " + sent + " bytes, buffering " +
-                                remaining + " bytes");
+                logger.debug("Partial write: sent {} bytes, buffering {} bytes", sent, remaining);
 
                 // Copy remaining data to output buffer
                 ByteBuffer copy = ByteBuffer.allocate(remaining);
@@ -242,7 +240,7 @@ class TglogConnection {
 
             return sent; // All data sent directly
         } catch (IOException e) {
-            logger.log(TglogLogger.Level.ERROR, "Failed to send data to " + endpoint, e);
+            logger.error("Failed to send data to {}", endpoint, e);
             state = State.ERROR;
             throw e;
         }
@@ -276,8 +274,7 @@ class TglogConnection {
             if (!outputBuffer.isEmpty()) {
                 // Check buffer size limit
                 if (outputBufferSize + totalSize > MAX_OUTPUT_BUFFER_SIZE) {
-                    logger.log(TglogLogger.Level.ERROR,
-                            "Output buffer full: " + outputBufferSize + " bytes");
+                    logger.error("Output buffer full: {} bytes", outputBufferSize);
                     return -1;
                 }
 
@@ -292,9 +289,7 @@ class TglogConnection {
                     }
                 }
 
-                logger.log(TglogLogger.Level.DEBUG,
-                        "Buffered " + totalSize + " bytes (total buffered: " +
-                                outputBufferSize + ")");
+                logger.debug("Buffered {} bytes (total buffered: {})", totalSize, outputBufferSize);
 
                 return totalSize; // All data accepted (buffered)
             }
@@ -338,16 +333,14 @@ class TglogConnection {
                     }
                 }
 
-                logger.log(TglogLogger.Level.DEBUG,
-                        "Partial write: sent " + sent + " bytes, buffering " +
-                                remaining + " bytes");
+                logger.debug("Partial write: sent {} bytes, buffering {} bytes", sent, remaining);
 
                 return totalSize; // All data accepted (some buffered)
             }
 
             return sent; // All data sent directly
         } catch (IOException e) {
-            logger.log(TglogLogger.Level.ERROR, "Failed to send data to " + endpoint, e);
+            logger.error("Failed to send data to {}", endpoint, e);
             state = State.ERROR;
             throw e;
         }
@@ -413,7 +406,7 @@ class TglogConnection {
             try {
                 flushOutputBuffer();
             } catch (IOException e) {
-                logger.log(TglogLogger.Level.ERROR, "Failed to flush output buffer", e);
+                logger.error("{}", "Failed to flush output buffer", e);
                 state = State.ERROR;
             }
         }
@@ -466,9 +459,8 @@ class TglogConnection {
 
         // Check if we have space
         if (outputBufferSize + totalSize > MAX_OUTPUT_BUFFER_SIZE) {
-            logger.log(TglogLogger.Level.ERROR,
-                    "Cannot rescue pending data: output buffer would exceed limit (" +
-                            (outputBufferSize + totalSize) + " > " + MAX_OUTPUT_BUFFER_SIZE + ")");
+            logger.error("Cannot rescue pending data: output buffer would exceed limit ({} > {})",
+                    (outputBufferSize + totalSize), MAX_OUTPUT_BUFFER_SIZE);
             return false;
         }
 
@@ -480,8 +472,7 @@ class TglogConnection {
             }
         }
 
-        logger.log(TglogLogger.Level.INFO,
-                "Rescued " + totalSize + " bytes of pending data from another connection");
+        logger.info("Rescued {} bytes of pending data from another connection", totalSize);
 
         return true;
     }
@@ -512,9 +503,9 @@ class TglogConnection {
             outputBuffer.clear();
             outputBufferSize = 0;
 
-            logger.log(TglogLogger.Level.INFO, "Closed connection to " + endpoint);
+            logger.info("Closed connection to {}", endpoint);
         } catch (IOException e) {
-            logger.log(TglogLogger.Level.ERROR, "Error closing connection to " + endpoint, e);
+            logger.error("Error closing connection to {}", endpoint, e);
         }
     }
 

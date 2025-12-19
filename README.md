@@ -75,6 +75,13 @@ mvn package
     <artifactId>tglog-java</artifactId>
     <version>1.0.0</version>
 </dependency>
+
+<!-- SLF4J 实现（根据项目需要选择） -->
+<dependency>
+    <groupId>ch.qos.logback</groupId>
+    <artifactId>logback-classic</artifactId>
+    <version>1.4.14</version>
+</dependency>
 ```
 
 **或直接使用JAR文件：**
@@ -86,7 +93,8 @@ mvn package
 **系统要求：**
 - Java 8 或更高版本
 - Maven 3.6+（用于构建）
-- 无其他外部依赖（纯Java实现）
+- SLF4J API（已包含在依赖中）
+- SLF4J 实现（如 Logback、Log4j2，由应用程序选择）
 
 ### 3. 运行示例
 
@@ -434,14 +442,54 @@ Error: Message timeout
 - 检查网络连接
 - 检查服务器负载
 
+### 日志配置
+
+TGLog SDK 使用 SLF4J 作为日志门面，你可以选择任何 SLF4J 实现（Logback、Log4j2 等）。
+
+**使用 Logback（推荐）：**
+
+创建 `src/main/resources/logback.xml`：
+
+```xml
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- TGLog SDK 日志级别 -->
+    <logger name="com.tencent.tglog" level="INFO"/>
+
+    <!-- 调试时可以设置为 DEBUG -->
+    <!-- <logger name="com.tencent.tglog" level="DEBUG"/> -->
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>
+```
+
+**使用 SLF4J Simple（测试用）：**
+
+```xml
+<dependency>
+    <groupId>org.slf4j</groupId>
+    <artifactId>slf4j-simple</artifactId>
+    <version>2.0.9</version>
+</dependency>
+```
+
+通过系统属性配置：
+```bash
+java -Dorg.slf4j.simpleLogger.defaultLogLevel=debug \
+     -Dorg.slf4j.simpleLogger.log.com.tencent.tglog=debug \
+     -jar your-app.jar
+```
+
 ### 调试技巧
 
 ```java
-// 启用调试日志
-TglogConfig config = TglogConfig.createTcp("host", port)
-    .setDebugEnabled(true)
-    .setLogger(new TglogLogger.DefaultLogger());
-
 // 定期打印指标
 ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 scheduler.scheduleAtFixedRate(() -> {

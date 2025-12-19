@@ -75,14 +75,16 @@ TglogClient (主客户端)
 2. `TglogClient.java` - 主客户端
 3. `TglogWorker.java` - Worker线程
 4. `TglogConnection.java` - 连接管理
-5. `TglogMetrics.java` - 性能统计
+5. `TglogMetrics.java` - 性能统计（使用 Prometheus Java Client）
 6. `LockFreeQueue.java` - 无锁队列
 7. `BatchBuffer.java` - 批次缓冲
 8. `EndpointManager.java` - 端点管理
 9. `LogMessage.java` - 消息封装
 10. `TglogCallback.java` - 回调接口
-11. `TglogLogger.java` - 日志接口
+11. `Backoff.java` - 退避策略
 12. `TglogException.java` - 异常类
+
+**注**: 日志使用 SLF4J API，用户可选择任何 SLF4J 实现（Logback、Log4j2 等）
 
 #### 测试类 (src/test/java)
 1. `TglogClientTest.java` - 性能测试

@@ -1,5 +1,8 @@
 package com.tencent.tglog;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -23,6 +26,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 class TglogWorker implements Runnable {
 
+    private static final Logger logger = LoggerFactory.getLogger(TglogWorker.class);
+
     enum State {
         INIT,       // Worker initialized
         READY,      // Worker ready to accept messages
@@ -33,7 +38,6 @@ class TglogWorker implements Runnable {
     // Worker identification
     private final int workerId;
     private final TglogConfig config;
-    private final TglogLogger logger;
     private final TglogMetrics metrics;
 
     // State management
@@ -99,10 +103,9 @@ class TglogWorker implements Runnable {
     /**
      * Create a new worker.
      */
-    public TglogWorker(int workerId, TglogConfig config, TglogLogger logger, TglogMetrics metrics) {
+    public TglogWorker(int workerId, TglogConfig config, TglogMetrics metrics) {
         this.workerId = workerId;
         this.config = config;
-        this.logger = logger != null ? logger : new TglogLogger.NoOpLogger();
         this.metrics = metrics;
 
         // Initialize lock-free queues
@@ -126,8 +129,7 @@ class TglogWorker implements Runnable {
      */
     public void setInitialEndpoints(List<InetSocketAddress> endpoints) {
         this.initialEndpoints = new ArrayList<>(endpoints);
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " received " + endpoints.size() + " initial endpoints");
+        logger.info("Worker {} received {} initial endpoints", workerId, endpoints.size());
     }
 
     /**
@@ -144,24 +146,20 @@ class TglogWorker implements Runnable {
             selector.wakeup();
         }
 
-        logger.log(TglogLogger.Level.DEBUG,
-            "Worker " + workerId + " notified of endpoint update: " + newEndpoints.size() + " endpoints");
+        logger.debug("Worker {} notified of endpoint update: {} endpoints", workerId, newEndpoints.size());
     }
 
     /**
      * Start the worker thread.
      */
     public void start() {
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " starting thread, initialEndpoints=" +
-            (initialEndpoints == null ? "null" : initialEndpoints.size()));
+        logger.info("Worker {} starting thread, initialEndpoints={}", workerId, (initialEndpoints == null ? "null" : initialEndpoints.size()));
 
         workerThread = new Thread(this, "TglogWorker-" + workerId);
         workerThread.setDaemon(false);
         workerThread.start();
 
-        logger.log(TglogLogger.Level.DEBUG,
-            "Worker " + workerId + " thread started, waiting for ready...");
+        logger.debug("Worker {} thread started, waiting for ready...", workerId);
 
         // Wait for worker to be ready
         long startTime = System.currentTimeMillis();
@@ -172,8 +170,7 @@ class TglogWorker implements Runnable {
             while (!initStarted && state == State.INIT) {
                 long elapsed = System.currentTimeMillis() - startTime;
                 if (elapsed >= timeout) {
-                    logger.log(TglogLogger.Level.ERROR,
-                        "Worker " + workerId + " timeout waiting for init to start");
+                    logger.error("Worker {} timeout waiting for init to start", workerId);
                     break;
                 }
                 try {
@@ -188,8 +185,7 @@ class TglogWorker implements Runnable {
             while (state == State.INIT && readyConnCount.get() + failedConnCount.get() < initConnCount.get()) {
                 long elapsed = System.currentTimeMillis() - startTime;
                 if (elapsed >= timeout) {
-                    logger.log(TglogLogger.Level.ERROR,
-                        "Worker " + workerId + " timeout waiting for connections");
+                    logger.error("Worker {} timeout waiting for connections", workerId);
                     break;
                 }
                 try {
@@ -201,16 +197,13 @@ class TglogWorker implements Runnable {
             }
         }
 
-        logger.log(TglogLogger.Level.DEBUG,
-            "Worker " + workerId + " wait complete: ready=" + readyConnCount.get() +
-            ", failed=" + failedConnCount.get() + ", init=" + initConnCount.get());
+        logger.debug("Worker {} wait complete: ready={}, failed={}, init={}", workerId, readyConnCount.get(), failedConnCount.get(), initConnCount.get());
 
         if (readyConnCount.get() <= 0) {
             throw new RuntimeException("Worker " + workerId + " failed to initialize connections");
         }
 
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " started with " + readyConnCount.get() + " ready connections");
+        logger.info("Worker {} started with {} ready connections", workerId, readyConnCount.get());
     }
 
     /**
@@ -219,29 +212,29 @@ class TglogWorker implements Runnable {
     @Override
     public void run() {
         try {
-            logger.log(TglogLogger.Level.INFO, "Worker " + workerId + " thread started");
+            logger.info("Worker {} thread started", workerId);
 
             // Initialize NIO selector
-            logger.log(TglogLogger.Level.DEBUG, "Worker " + workerId + " opening selector");
+            logger.debug("Worker {} opening selector", workerId);
             selector = Selector.open();
 
             // Initialize connections from initial endpoints
-            logger.log(TglogLogger.Level.DEBUG, "Worker " + workerId + " initializing connections");
+            logger.debug("Worker {} initializing connections", workerId);
             initializeConnections();
 
             // Wait for initial connections to be ready
-            logger.log(TglogLogger.Level.DEBUG, "Worker " + workerId + " waiting for connections");
+            logger.debug("Worker {} waiting for connections", workerId);
             waitForInitialConnections();
 
             // Mark as ready
             state = State.READY;
-            logger.log(TglogLogger.Level.INFO, "Worker " + workerId + " is ready");
+            logger.info("Worker {} is ready", workerId);
 
             // Main event loop
             runEventLoop();
 
         } catch (Exception e) {
-            logger.log(TglogLogger.Level.ERROR, "Worker " + workerId + " error", e);
+            logger.error("Worker {}{}", workerId, " error", e);
             // Notify waiting thread even on error
             synchronized (readyLock) {
                 readyLock.notifyAll();
@@ -255,9 +248,7 @@ class TglogWorker implements Runnable {
      * Initialize connections from initial endpoints.
      */
     private void initializeConnections() throws IOException {
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " initializing connections, initialEndpoints=" +
-            (initialEndpoints == null ? "null" : initialEndpoints.size()));
+        logger.info("Worker {} initializing connections, initialEndpoints={}", workerId, (initialEndpoints == null ? "null" : initialEndpoints.size()));
 
         if (initialEndpoints == null || initialEndpoints.isEmpty()) {
             throw new IOException("No initial endpoints provided");
@@ -268,24 +259,21 @@ class TglogWorker implements Runnable {
 
         // Determine connections per endpoint
         connectionsPerEndpoint = currentEndpoints.size() <= 2 ? 2 : 1;
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " using " + connectionsPerEndpoint +
-            " connections per endpoint (total endpoints: " + currentEndpoints.size() + ")");
+        logger.info("Worker {} using {} connections per endpoint (total endpoints: {})",
+                workerId, connectionsPerEndpoint, currentEndpoints.size());
 
         // Create connections for each endpoint
         for (InetSocketAddress endpoint : currentEndpoints) {
             int successfulConns = 0;
             for (int i = 0; i < connectionsPerEndpoint; i++) {
                 try {
-                    TglogConnection conn = new TglogConnection(endpoint, config, logger);
+                    TglogConnection conn = new TglogConnection(endpoint, config);
                     conn.connect(selector);
                     connectingConns.add(conn);
                     initConnCount.incrementAndGet();
                     successfulConns++;
                 } catch (IOException e) {
-                    logger.log(TglogLogger.Level.WARN,
-                        "Failed to create connection " + (i + 1) + "/" + connectionsPerEndpoint +
-                        " for endpoint " + endpoint, e);
+                    logger.warn("Failed to create connection {}/{} for endpoint {}", (i + 1), connectionsPerEndpoint, endpoint, e);
                 }
             }
 
@@ -299,8 +287,7 @@ class TglogWorker implements Runnable {
             throw new IOException("No connections could be created");
         }
 
-        logger.log(TglogLogger.Level.DEBUG,
-            "Worker " + workerId + " created " + connectingConns.size() + " initial connections");
+        logger.debug("Worker {} created {} initial connections", workerId, connectingConns.size());
 
         // Signal that initialization has started (after initConnCount is set)
         synchronized (readyLock) {
@@ -338,7 +325,7 @@ class TglogWorker implements Runnable {
                 checkConnectingConnections();
 
             } catch (IOException e) {
-                logger.log(TglogLogger.Level.ERROR, "Error waiting for connections", e);
+                logger.error("{}", "Error waiting for connections", e);
                 break;
             }
         }
@@ -405,11 +392,11 @@ class TglogWorker implements Runnable {
                 }
 
             } catch (Exception e) {
-                logger.log(TglogLogger.Level.ERROR, "Error in event loop", e);
+                logger.error("{}", "Error in event loop", e);
             }
         }
 
-        logger.log(TglogLogger.Level.INFO, "Worker " + workerId + " event loop ended");
+        logger.info("Worker {} event loop ended", workerId);
     }
 
     /**
@@ -426,8 +413,7 @@ class TglogWorker implements Runnable {
      * Handle endpoint update (called in worker thread).
      */
     private void handleEndpointUpdate(List<InetSocketAddress> newEndpoints) {
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " processing endpoint update: " + newEndpoints.size() + " endpoints");
+        logger.info("Worker {} processing endpoint update: {} endpoints", workerId, newEndpoints.size());
 
         // Find added and removed endpoints
         Set<InetSocketAddress> oldSet = new HashSet<>(currentEndpoints);
@@ -459,9 +445,7 @@ class TglogWorker implements Runnable {
         currentEndpoints = new ArrayList<>(newEndpoints);
         metrics.setEndpointCount(currentEndpoints.size());
 
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " endpoint update complete: added=" + added.size() +
-            ", removed=" + removed.size() + ", total=" + currentEndpoints.size());
+        logger.info("Worker {} endpoint update complete: added={}, removed={}, total={}", workerId, added.size(), removed.size(), currentEndpoints.size());
     }
 
     /**
@@ -490,8 +474,7 @@ class TglogWorker implements Runnable {
                     conn.tryFlush();
                 }
             } catch (Exception e) {
-                logger.log(TglogLogger.Level.ERROR,
-                    "Error processing key for " + conn.getEndpoint(), e);
+                logger.error("Error processing key for {}", conn.getEndpoint(), e);
                 handleConnectionError(conn);
             }
         }
@@ -501,16 +484,13 @@ class TglogWorker implements Runnable {
      * Check connecting connections for completion.
      */
     private void checkConnectingConnections() {
-        logger.log(TglogLogger.Level.DEBUG,
-            "Worker " + workerId + " checking " + connectingConns.size() + " connecting connections");
+        logger.debug("Worker {} checking  connecting connections", workerId, connectingConns.size());
 
         for (int i = connectingConns.size() - 1; i >= 0; i--) {
             TglogConnection conn = connectingConns.get(i);
             TglogConnection.State connState = conn.getState();
 
-            logger.log(TglogLogger.Level.DEBUG,
-                "Worker " + workerId + " connection " + i + " state: " + connState +
-                ", endpoint: " + conn.getEndpoint());
+            logger.debug("Worker {} connection {} state: {}, endpoint: {}", workerId, i, connState, conn.getEndpoint());
 
             if (connState == TglogConnection.State.CONNECTED) {
                 // Move to connected list
@@ -524,16 +504,13 @@ class TglogWorker implements Runnable {
                 if (state == State.INIT) {
                     synchronized (readyLock) {
                         readyConnCount.incrementAndGet();
-                        logger.log(TglogLogger.Level.INFO,
-                            "Worker " + workerId + " ready conn count: " + readyConnCount.get() +
-                            "/" + initConnCount.get());
+                        logger.info("Worker {} ready conn count: {}/{}", workerId, readyConnCount.get(), initConnCount.get());
                         readyLock.notifyAll();
                     }
                 }
 
-                logger.log(TglogLogger.Level.INFO,
-                    "Worker " + workerId + " connection ready: " + conn.getEndpoint() +
-                    " (total: " + connections.size() + ")");
+                logger.info("Worker {} connection ready: {} (total: {})",
+                        workerId, conn.getEndpoint(), connections.size());
 
             } else if (connState == TglogConnection.State.ERROR) {
                 // Remove failed connection
@@ -546,15 +523,12 @@ class TglogWorker implements Runnable {
                 if (state == State.INIT) {
                     synchronized (readyLock) {
                         failedConnCount.incrementAndGet();
-                        logger.log(TglogLogger.Level.WARN,
-                            "Worker " + workerId + " failed conn count: " + failedConnCount.get() +
-                            "/" + initConnCount.get());
+                        logger.warn("Worker {} failed conn count: {}/{}", workerId, failedConnCount.get(), initConnCount.get());
                         readyLock.notifyAll();
                     }
                 }
 
-                logger.log(TglogLogger.Level.WARN,
-                    "Worker " + workerId + " connection failed: " + conn.getEndpoint());
+                logger.warn("Worker {} connection failed: {}", workerId, conn.getEndpoint());
             }
         }
     }
@@ -564,11 +538,9 @@ class TglogWorker implements Runnable {
      */
     private void handleConnectable(TglogConnection conn) {
         if (conn.finishConnect()) {
-            logger.log(TglogLogger.Level.DEBUG,
-                "Connection established: " + conn.getEndpoint());
+            logger.debug("Connection established: {}", conn.getEndpoint());
         } else {
-            logger.log(TglogLogger.Level.WARN,
-                "Failed to finish connection: " + conn.getEndpoint());
+            logger.warn("Failed to finish connection: {}", conn.getEndpoint());
             handleConnectionError(conn);
         }
     }
@@ -607,15 +579,13 @@ class TglogWorker implements Runnable {
                     break; // Still in retry backoff
                 }
                 // Retry timeout - fail the batch
-                logger.log(TglogLogger.Level.WARN,
-                    "Worker " + workerId + " batch retry timeout");
+                logger.warn("Worker {} batch retry timeout", workerId);
                 failCurrentBatch(TglogException.ERR_SEND_TIMEOUT);
             }
 
             // Check batch send timeout
             if (isBatchSendTimeout()) {
-                logger.log(TglogLogger.Level.WARN,
-                    "Worker " + workerId + " batch send timeout");
+                logger.warn("Worker {} batch send timeout", workerId);
                 failCurrentBatch(TglogException.ERR_SEND_TIMEOUT);
             }
 
@@ -781,8 +751,7 @@ class TglogWorker implements Runnable {
         // Get a connection
         TglogConnection conn = getConnection();
         if (conn == null) {
-            logger.log(TglogLogger.Level.ERROR,
-                "Worker " + workerId + " no available connections");
+            logger.error("Worker {} no available connections", workerId);
             return TglogException.ERR_NO_AVAILABLE_CONN;
         }
 
@@ -798,8 +767,7 @@ class TglogWorker implements Runnable {
             }
 
         } catch (IOException e) {
-            logger.log(TglogLogger.Level.ERROR,
-                "Worker " + workerId + " send error", e);
+            logger.error("Worker {}{}", workerId, " send error", e);
             handleConnectionError(conn);
             return TglogException.ERR_SEND_FAILED;
         }
@@ -848,8 +816,7 @@ class TglogWorker implements Runnable {
             }
 
             // Partial send - data is buffered, consider it success
-            logger.log(TglogLogger.Level.DEBUG,
-                "Worker " + workerId + " partial TCP send, data buffered");
+            logger.debug("Worker {} partial TCP send, data buffered", workerId);
             return TglogException.ERR_OK;
         }
 
@@ -877,9 +844,8 @@ class TglogWorker implements Runnable {
                     if (conn == null) {
                         return TglogException.ERR_NO_AVAILABLE_CONN;
                     }
-                    logger.log(TglogLogger.Level.DEBUG,
-                        "UDP send would block, trying another connection (attempt " +
-                        (tryCount + 1) + "/" + maxTries + ")");
+                    logger.debug("UDP send would block, trying another connection (attempt {}/{})",
+                            (tryCount + 1), maxTries);
                     continue;
                 }
 
@@ -899,9 +865,8 @@ class TglogWorker implements Runnable {
                 if (conn == null) {
                     return TglogException.ERR_NO_AVAILABLE_CONN;
                 }
-                logger.log(TglogLogger.Level.DEBUG,
-                    "UDP send would block (sent=0), trying another connection (attempt " +
-                    (tryCount + 1) + "/" + maxTries + ")");
+                logger.debug("UDP send would block (sent=0), trying another connection (attempt {}/{})",
+                        (tryCount + 1), maxTries);
             }
         }
 
@@ -916,8 +881,7 @@ class TglogWorker implements Runnable {
     private boolean retryBatch() {
         // Check max retries
         if (currentBatchRetries >= config.getMaxRetries()) {
-            logger.log(TglogLogger.Level.WARN,
-                "Worker " + workerId + " max retries exceeded");
+            logger.warn("Worker {} max retries exceeded", workerId);
             completeBatch(TglogException.ERR_SEND_TIMEOUT);
             return true;
         }
@@ -936,9 +900,8 @@ class TglogWorker implements Runnable {
             batchRetryDeadline = batchRetryStartTime + totalBackoff;
         }
 
-        logger.log(TglogLogger.Level.DEBUG,
-            "Worker " + workerId + " retrying batch in " + backoffMs + "ms (attempt " +
-            currentBatchRetries + "/" + config.getMaxRetries() + ")");
+        logger.debug("Worker {} retrying batch in {}ms (attempt {}/{})",
+                workerId, backoffMs, currentBatchRetries, config.getMaxRetries());
 
         return false; // Still retrying
     }
@@ -1010,18 +973,16 @@ class TglogWorker implements Runnable {
 
         // Don't mark if only one endpoint
         if (currentEndpoints.size() <= 1) {
-            logger.log(TglogLogger.Level.WARN,
-                "Worker " + workerId + " skip marking " + addr +
-                " unavailable (only one endpoint)");
+            logger.warn("Worker {} skip marking {} unavailable (only one endpoint)",
+                    workerId, addr);
             return;
         }
 
         // Don't mark if there are still connections
         for (TglogConnection conn : connections) {
             if (conn.getEndpoint().equals(endpoint)) {
-                logger.log(TglogLogger.Level.WARN,
-                    "Worker " + workerId + " skip marking " + addr +
-                    " unavailable (still has connections)");
+                logger.warn("Worker {} skip marking {} unavailable (still has connections)",
+                        workerId, addr);
                 return;
             }
         }
@@ -1029,8 +990,7 @@ class TglogWorker implements Runnable {
         unavailableEndpoints.put(addr, System.currentTimeMillis());
         endpointRetryCount.put(addr, 0);
 
-        logger.log(TglogLogger.Level.WARN,
-            "Worker " + workerId + " marked endpoint unavailable: " + addr);
+        logger.warn("Worker {} marked endpoint unavailable: {}", workerId, addr);
     }
 
     /**
@@ -1060,21 +1020,18 @@ class TglogWorker implements Runnable {
             // Find endpoint
             InetSocketAddress endpoint = findEndpointByAddress(addr);
             if (endpoint != null) {
-                logger.log(TglogLogger.Level.INFO,
-                    "Worker " + workerId + " attempting to recover endpoint: " + addr);
+                logger.info("Worker {} attempting to recover endpoint: {}", workerId, addr);
 
                 // Try to create connections
                 int successfulConns = 0;
                 for (int i = 0; i < connectionsPerEndpoint; i++) {
                     try {
-                        TglogConnection conn = new TglogConnection(endpoint, config, logger);
+                        TglogConnection conn = new TglogConnection(endpoint, config);
                         conn.connect(selector);
                         connectingConns.add(conn);
                         successfulConns++;
                     } catch (IOException e) {
-                        logger.log(TglogLogger.Level.WARN,
-                            "Failed to recover connection " + (i + 1) + "/" +
-                            connectionsPerEndpoint + " for " + addr, e);
+                        logger.warn("Failed to recover connection {}/{} for {}", (i + 1), connectionsPerEndpoint, addr, e);
                     }
                 }
 
@@ -1124,9 +1081,7 @@ class TglogWorker implements Runnable {
             TglogConnection conn = connections.get(i);
 
             if (conn.isExpired()) {
-                logger.log(TglogLogger.Level.INFO,
-                    "Worker " + workerId + " replacing expired connection: " +
-                    conn.getEndpoint());
+                logger.info("Worker {} replacing expired connection: {}", workerId, conn.getEndpoint());
 
                 // Try to create replacement
                 replaceConnection(conn);
@@ -1148,7 +1103,7 @@ class TglogWorker implements Runnable {
             }
 
             try {
-                TglogConnection newConn = new TglogConnection(endpoint, config, logger);
+                TglogConnection newConn = new TglogConnection(endpoint, config);
                 newConn.connect(selector);
                 connectingConns.add(newConn);
 
@@ -1158,8 +1113,7 @@ class TglogWorker implements Runnable {
 
                 return;
             } catch (IOException e) {
-                logger.log(TglogLogger.Level.WARN,
-                    "Failed to create replacement connection for " + endpoint, e);
+                logger.warn("Failed to create replacement connection for {}", endpoint, e);
                 markEndpointUnavailable(endpoint);
             }
         }
@@ -1181,8 +1135,7 @@ class TglogWorker implements Runnable {
                             rescuedBytes += buf.remaining();
                         }
                         // Note: TglogMetrics doesn't have incrementRescuedBytes, skip it
-                        logger.log(TglogLogger.Level.INFO,
-                            "Worker " + workerId + " rescued " + rescuedBytes + " bytes");
+                        logger.info("Worker {} rescued {} bytes", workerId, rescuedBytes);
                     }
                 }
             }
@@ -1218,13 +1171,12 @@ class TglogWorker implements Runnable {
             // Create if below target
             if (existing < connectionsPerEndpoint) {
                 try {
-                    TglogConnection conn = new TglogConnection(endpoint, config, logger);
+                    TglogConnection conn = new TglogConnection(endpoint, config);
                     conn.connect(selector);
                     connectingConns.add(conn);
                     return true;
                 } catch (IOException e) {
-                    logger.log(TglogLogger.Level.WARN,
-                        "Failed to supplement connection for " + endpoint, e);
+                    logger.warn("Failed to supplement connection for {}", endpoint, e);
                     markEndpointUnavailable(endpoint);
                 }
             }
@@ -1242,8 +1194,7 @@ class TglogWorker implements Runnable {
             long elapsed = now - lastEmergencySupplementTime;
 
             if (elapsed >= EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS) {
-                logger.log(TglogLogger.Level.WARN,
-                    "Worker " + workerId + " emergency supplement: no connections available");
+                logger.warn("Worker {} emergency supplement: no connections available", workerId);
                 supplementConnection();
                 lastEmergencySupplementTime = now;
             }
@@ -1254,20 +1205,17 @@ class TglogWorker implements Runnable {
      * Add connections for a new endpoint.
      */
     private void addConnectionsForEndpoint(InetSocketAddress endpoint) {
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " adding connections for new endpoint: " + endpoint);
+        logger.info("Worker {} adding connections for new endpoint: {}", workerId, endpoint);
 
         int successfulConns = 0;
         for (int i = 0; i < connectionsPerEndpoint; i++) {
             try {
-                TglogConnection conn = new TglogConnection(endpoint, config, logger);
+                TglogConnection conn = new TglogConnection(endpoint, config);
                 conn.connect(selector);
                 connectingConns.add(conn);
                 successfulConns++;
             } catch (IOException e) {
-                logger.log(TglogLogger.Level.WARN,
-                    "Failed to create connection " + (i + 1) + "/" +
-                    connectionsPerEndpoint + " for " + endpoint, e);
+                logger.warn("Failed to create connection {}/{} for {}", (i + 1), connectionsPerEndpoint, endpoint, e);
             }
         }
 
@@ -1280,8 +1228,7 @@ class TglogWorker implements Runnable {
      * Remove connections for an endpoint.
      */
     private void removeConnectionsByEndpoint(InetSocketAddress endpoint) {
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " removing connections for endpoint: " + endpoint);
+        logger.info("Worker {} removing connections for endpoint: {}", workerId, endpoint);
 
         // Remove from connections list
         for (int i = connections.size() - 1; i >= 0; i--) {
@@ -1385,11 +1332,10 @@ class TglogWorker implements Runnable {
      * Cleanup resources.
      */
     private void cleanup() {
-        logger.log(TglogLogger.Level.INFO, "Worker " + workerId + " cleaning up");
+        logger.info("Worker {} cleaning up", workerId);
 
         // Flush remaining messages (without retry)
-        logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " flushing " + messageQueue.size() + " remaining messages");
+        logger.info("Worker {} flushing {} remaining messages", workerId, messageQueue.size());
 
         while (!messageQueue.isEmpty() || pendingMessage != null) {
             processMessages();
@@ -1421,12 +1367,12 @@ class TglogWorker implements Runnable {
             try {
                 selector.close();
             } catch (IOException e) {
-                logger.log(TglogLogger.Level.ERROR, "Error closing selector", e);
+                logger.error("{}", "Error closing selector", e);
             }
         }
 
         state = State.CLOSED;
-        logger.log(TglogLogger.Level.INFO, "Worker " + workerId + " cleanup complete");
+        logger.info("Worker {} cleanup complete", workerId);
     }
 
     /**

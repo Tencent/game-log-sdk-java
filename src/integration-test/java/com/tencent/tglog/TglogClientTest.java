@@ -45,10 +45,6 @@ public class TglogClientTest {
                 .setBatchingMaxDelayMs(10)
                 .setDebugEnabled(testConfig.debug);
 
-        if (testConfig.debug) {
-            config.setLogger(new TglogLogger.DefaultLogger());
-        }
-
         // Create client
         System.out.println("\nCreating client...");
         TglogClient client = new TglogClient(config);

@@ -1,5 +1,8 @@
 package com.tencent.tglog;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
@@ -17,10 +20,11 @@ import java.util.function.Consumer;
  */
 class EndpointManager {
 
+    private static final Logger logger = LoggerFactory.getLogger(EndpointManager.class);
+
     private final String host;
     private final int port;
     private final TglogConfig config;
-    private final TglogLogger logger;
 
     private volatile List<InetSocketAddress> currentEndpoints = new ArrayList<>();
     private final ScheduledExecutorService scheduler;
@@ -28,11 +32,10 @@ class EndpointManager {
 
     private final List<Consumer<List<InetSocketAddress>>> changeListeners = new CopyOnWriteArrayList<>();
 
-    public EndpointManager(String host, int port, TglogConfig config, TglogLogger logger) {
+    public EndpointManager(String host, int port, TglogConfig config) {
         this.host = host;
         this.port = port;
         this.config = config;
-        this.logger = logger != null ? logger : new TglogLogger.NoOpLogger();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "tglog-dns-resolver");
             t.setDaemon(true);
@@ -56,8 +59,7 @@ class EndpointManager {
                 TimeUnit.SECONDS
         );
 
-        logger.log(TglogLogger.Level.INFO,
-                "Started DNS resolver for " + host + " (interval: " + intervalSeconds + "s)");
+        logger.info("Started DNS resolver for {} (interval: {}s)", host, intervalSeconds);
     }
 
     /**
@@ -76,7 +78,7 @@ class EndpointManager {
             scheduler.shutdownNow();
             Thread.currentThread().interrupt();
         }
-        logger.log(TglogLogger.Level.INFO, "Stopped DNS resolver");
+        logger.info("Stopped DNS resolver");
     }
 
     /**
@@ -88,8 +90,7 @@ class EndpointManager {
 
             // Check if endpoints changed
             if (!endpointsEqual(currentEndpoints, newEndpoints)) {
-                logger.log(TglogLogger.Level.INFO,
-                        "Endpoints changed: " + currentEndpoints.size() + " -> " + newEndpoints.size());
+                logger.info("Endpoints changed: {} -> {}", currentEndpoints.size(), newEndpoints.size());
 
                 List<InetSocketAddress> oldEndpoints = currentEndpoints;
                 currentEndpoints = newEndpoints;
@@ -100,7 +101,7 @@ class EndpointManager {
                 logEndpointChanges(oldEndpoints, newEndpoints);
             }
         } catch (Exception e) {
-            logger.log(TglogLogger.Level.ERROR, "Failed to resolve host: " + host, e);
+            logger.error("Failed to resolve host: {}", host, e);
         }
     }
 
@@ -121,8 +122,7 @@ class EndpointManager {
             throw new UnknownHostException("No addresses resolved for: " + host);
         }
 
-        logger.log(TglogLogger.Level.DEBUG,
-                "Resolved " + host + " to " + endpoints.size() + " endpoint(s): " + endpoints);
+        logger.debug("Resolved {} to {} endpoint(s): {}", host, endpoints.size(), endpoints);
 
         return endpoints;
     }
@@ -153,14 +153,14 @@ class EndpointManager {
         Set<InetSocketAddress> added = new HashSet<>(newSet);
         added.removeAll(oldSet);
         if (!added.isEmpty()) {
-            logger.log(TglogLogger.Level.INFO, "Added endpoints: " + added);
+            logger.info("Added endpoints: {}", added);
         }
 
         // Find removed endpoints
         Set<InetSocketAddress> removed = new HashSet<>(oldSet);
         removed.removeAll(newSet);
         if (!removed.isEmpty()) {
-            logger.log(TglogLogger.Level.INFO, "Removed endpoints: " + removed);
+            logger.info("Removed endpoints: {}", removed);
         }
     }
 
@@ -179,7 +179,7 @@ class EndpointManager {
             try {
                 listener.accept(new ArrayList<>(newEndpoints));
             } catch (Exception e) {
-                logger.log(TglogLogger.Level.ERROR, "Error notifying endpoint change listener", e);
+                logger.error("{}", "Error notifying endpoint change listener", e);
             }
         }
     }

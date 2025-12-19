@@ -21,6 +21,13 @@
     </properties>
 
     <dependencies>
+        <!-- SLF4J API for logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.9</version>
+        </dependency>
+
         <!-- Prometheus Java Client (simpleclient only, no HTTP server) -->
         <!-- SDK只收集指标，暴露由集成应用决定 -->
         <dependency>
@@ -42,6 +49,14 @@
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- SLF4J Simple implementation for testing -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.9</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

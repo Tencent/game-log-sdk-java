@@ -19,8 +19,7 @@ public class SimpleExample {
         long t0 = System.currentTimeMillis();
         TglogConfig config = TglogConfig.createTcp("dev.tglog.com", 20001)
                 .setWorkerNum(4)
-                .setBatchingMaxMessages(50)
-                .setLogger(new TglogLogger.DefaultLogger());
+                .setBatchingMaxMessages(50);
 
         // Create client (AutoCloseable)
         long t1 = System.currentTimeMillis();

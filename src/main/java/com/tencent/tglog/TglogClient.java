@@ -1,5 +1,8 @@
 package com.tencent.tglog;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,8 +39,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class TglogClient implements AutoCloseable {
 
+    private static final Logger logger = LoggerFactory.getLogger(TglogClient.class);
+
     private final TglogConfig config;
-    private final TglogLogger logger;
     private final TglogMetrics metrics;
 
     // Components
@@ -61,16 +65,13 @@ public class TglogClient implements AutoCloseable {
         }
 
         this.config = config;
-        this.logger = config.getLogger() != null ? config.getLogger() : new TglogLogger.NoOpLogger();
         this.metrics = new TglogMetrics();
 
         // Auto-adjust batching max size based on protocol limits
         int maxRequestSize = config.getMaxRequestSize();
         if (config.getBatchingMaxSize() > maxRequestSize) {
-            logger.log(TglogLogger.Level.WARN,
-                    "Batching max size (" + config.getBatchingMaxSize() +
-                    ") exceeds protocol limit (" + maxRequestSize +
-                    "), adjusting to " + maxRequestSize);
+            logger.warn("Batching max size ({}) exceeds protocol limit ({}), adjusting to {}",
+                    config.getBatchingMaxSize(), maxRequestSize, maxRequestSize);
             config.setBatchingMaxSize(maxRequestSize);
         }
 
@@ -78,8 +79,7 @@ public class TglogClient implements AutoCloseable {
         this.endpointManager = new EndpointManager(
                 config.getHost(),
                 config.getPort(),
-                config,
-                logger
+                config
         );
 
         // Initialize workers
@@ -87,17 +87,15 @@ public class TglogClient implements AutoCloseable {
         this.workers = new ArrayList<>(workerNum);
 
         for (int i = 0; i < workerNum; i++) {
-            TglogWorker worker = new TglogWorker(i, config, logger, metrics);
+            TglogWorker worker = new TglogWorker(i, config, metrics);
             workers.add(worker);
         }
 
         // Start the client
         start();
 
-        logger.log(TglogLogger.Level.INFO,
-                "TglogClient created: " + config.getProtocol() + "://" +
-                        config.getHost() + ":" + config.getPort() +
-                        " (workers=" + workerNum + ")");
+        logger.info("TglogClient created: {}://{}:{} (workers={})",
+                config.getProtocol(), config.getHost(), config.getPort(), workerNum);
     }
 
     /**
@@ -127,8 +125,7 @@ public class TglogClient implements AutoCloseable {
                     worker.start();
                 }
 
-                logger.log(TglogLogger.Level.INFO,
-                        "TglogClient started with " + endpoints.size() + " endpoints");
+                logger.info("TglogClient started with {} endpoints", endpoints.size());
 
             } catch (Exception e) {
                 running.set(false);
@@ -222,8 +219,7 @@ public class TglogClient implements AutoCloseable {
      * Handle endpoint changes from DNS resolution.
      */
     private void onEndpointsChanged(List<InetSocketAddress> newEndpoints) {
-        logger.log(TglogLogger.Level.INFO,
-                "Endpoints changed: " + newEndpoints.size() + " endpoints");
+        logger.info("Endpoints changed: {} endpoints", newEndpoints.size());
 
         metrics.setEndpointCount(newEndpoints.size());
 
@@ -322,7 +318,7 @@ public class TglogClient implements AutoCloseable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            logger.log(TglogLogger.Level.INFO, "Closing TglogClient...");
+            logger.info("Closing TglogClient...");
 
             // Try to flush pending messages
             flush(config.getStopTimeout());
@@ -353,7 +349,7 @@ public class TglogClient implements AutoCloseable {
 
             running.set(false);
 
-            logger.log(TglogLogger.Level.INFO, "TglogClient closed");
+            logger.info("TglogClient closed");
         }
     }
 
