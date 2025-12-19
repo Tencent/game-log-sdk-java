@@ -2,6 +2,97 @@
 
 高性能纯Java实现的TGLog日志客户端，专为游戏服务器设计。
 
+## Maven 依赖
+
+### 添加依赖
+
+在你的项目 `pom.xml` 中添加：
+
+```xml
+<dependency>
+    <groupId>com.tencent.tglog</groupId>
+    <artifactId>tglog-java</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+```
+
+### 配置仓库
+
+在你的项目 `pom.xml` 中添加腾讯 Maven 仓库：
+
+```xml
+<repositories>
+    <repository>
+        <id>tencent_public</id>
+        <name>Tencent Maven Repository</name>
+        <url>https://mirrors.tencent.com/repository/maven/tglog/releases/</url>
+        <releases>
+            <enabled>true</enabled>
+        </releases>
+        <snapshots>
+            <enabled>false</enabled>
+        </snapshots>
+    </repository>
+    <repository>
+        <id>tencent_public_snapshots</id>
+        <name>Tencent Maven Snapshots Repository</name>
+        <url>https://mirrors.tencent.com/repository/maven/tglog/snapshots/</url>
+        <releases>
+            <enabled>false</enabled>
+        </releases>
+        <snapshots>
+            <enabled>true</enabled>
+        </snapshots>
+    </repository>
+</repositories>
+```
+
+**或者**在 `~/.m2/settings.xml` 中全局配置（推荐）：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              http://maven.apache.org/xsd/settings-1.0.0.xsd">
+    <profiles>
+        <profile>
+            <id>tencent-repos</id>
+            <repositories>
+                <repository>
+                    <id>tencent_public</id>
+                    <name>Tencent Maven Repository</name>
+                    <url>https://mirrors.tencent.com/repository/maven/tglog/releases/</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+                <repository>
+                    <id>tencent_public_snapshots</id>
+                    <name>Tencent Maven Snapshots Repository</name>
+                    <url>https://mirrors.tencent.com/repository/maven/tglog/snapshots/</url>
+                    <releases>
+                        <enabled>false</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>true</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+        </profile>
+    </profiles>
+
+    <activeProfiles>
+        <activeProfile>tencent-repos</activeProfile>
+    </activeProfiles>
+</settings>
+```
+
+配置完成后，执行 `mvn clean install` 即可自动下载依赖。
+
 ## 特性
 
 ### 核心特性

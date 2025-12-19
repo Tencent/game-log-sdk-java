@@ -7,11 +7,26 @@
 
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>TGLog Pure Java Client</name>
     <description>High-performance pure Java log client for game servers</description>
+
+    <!-- 配置发布到公司 Maven 私服 -->
+    <!-- 注意：需要将下面的 URL 替换为你们公司实际的 Maven 仓库地址 -->
+    <distributionManagement>
+        <repository>
+            <id>tencent_public</id>
+            <name>tglog</name>
+            <url>https://mirrors.tencent.com/repository/maven/tglog/releases/</url>
+        </repository>
+        <snapshotRepository>
+            <id>tencent_public_snapshots</id>
+            <name>tglog</name>
+            <url>https://mirrors.tencent.com/repository/maven/tglog/snapshots/</url>
+        </snapshotRepository>
+    </distributionManagement>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
