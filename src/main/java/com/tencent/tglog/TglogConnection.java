@@ -14,13 +14,16 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Represents a single network connection (TCP or UDP).
- *
+ * <p>
  * This class handles:
  * - Non-blocking I/O operations
  * - Connection lifecycle management
  * - Automatic reconnection
  * - Send buffer management
  */
+@edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+    value = "RV_RETURN_VALUE_IGNORED_BAD_PRACTICE",
+    justification = "Queue.offer() return value ignored - queue is unbounded LinkedList, offer always succeeds")
 class TglogConnection {
 
     enum State {
@@ -196,12 +199,13 @@ class TglogConnection {
                 ByteBuffer copy = ByteBuffer.allocate(originalRemaining);
                 copy.put(buffer);
                 copy.flip();
+
                 outputBuffer.offer(copy);
                 outputBufferSize += originalRemaining;
 
                 logger.log(TglogLogger.Level.DEBUG,
                         "Buffered " + originalRemaining + " bytes (total buffered: " +
-                        outputBufferSize + ")");
+                                outputBufferSize + ")");
 
                 return originalRemaining; // Data accepted (buffered)
             }
@@ -224,7 +228,7 @@ class TglogConnection {
 
                 logger.log(TglogLogger.Level.DEBUG,
                         "Partial write: sent " + sent + " bytes, buffering " +
-                        remaining + " bytes");
+                                remaining + " bytes");
 
                 // Copy remaining data to output buffer
                 ByteBuffer copy = ByteBuffer.allocate(remaining);
@@ -290,7 +294,7 @@ class TglogConnection {
 
                 logger.log(TglogLogger.Level.DEBUG,
                         "Buffered " + totalSize + " bytes (total buffered: " +
-                        outputBufferSize + ")");
+                                outputBufferSize + ")");
 
                 return totalSize; // All data accepted (buffered)
             }
@@ -336,7 +340,7 @@ class TglogConnection {
 
                 logger.log(TglogLogger.Level.DEBUG,
                         "Partial write: sent " + sent + " bytes, buffering " +
-                        remaining + " bytes");
+                                remaining + " bytes");
 
                 return totalSize; // All data accepted (some buffered)
             }
@@ -353,6 +357,9 @@ class TglogConnection {
      * Flush output buffer (try to send buffered data).
      * Called automatically when sending new data or when connection becomes writable.
      */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "RV_RETURN_VALUE_IGNORED",
+        justification = "poll() return value intentionally ignored - we already checked with peek() and only poll to remove")
     private void flushOutputBuffer() throws IOException {
         while (!outputBuffer.isEmpty()) {
             ByteBuffer buf = outputBuffer.peek();
@@ -461,7 +468,7 @@ class TglogConnection {
         if (outputBufferSize + totalSize > MAX_OUTPUT_BUFFER_SIZE) {
             logger.log(TglogLogger.Level.ERROR,
                     "Cannot rescue pending data: output buffer would exceed limit (" +
-                    (outputBufferSize + totalSize) + " > " + MAX_OUTPUT_BUFFER_SIZE + ")");
+                            (outputBufferSize + totalSize) + " > " + MAX_OUTPUT_BUFFER_SIZE + ")");
             return false;
         }
 

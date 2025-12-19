@@ -217,6 +217,9 @@ class BatchBuffer {
      *
      * @param sentCount Number of messages successfully sent
      */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "DE_MIGHT_IGNORE",
+        justification = "Intentionally ignoring callback exceptions to prevent one bad callback from affecting others")
     public void notifyAndRemove(int sentCount) {
         if (sentCount <= 0 || sentCount > messages.size()) {
             return;
@@ -251,6 +254,9 @@ class BatchBuffer {
      * @param errorCode Error code
      * @param errorMessage Error message
      */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "DE_MIGHT_IGNORE",
+        justification = "Intentionally ignoring callback exceptions to prevent one bad callback from affecting others")
     public void notifyAllFailed(int errorCode, String errorMessage) {
         for (LogMessage message : messages) {
             if (message.getCallback() != null) {

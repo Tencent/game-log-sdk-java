@@ -169,8 +169,11 @@ public class TglogClient implements AutoCloseable {
             logPayload += "\n";
         }
 
+        // Create log message (which will cache the payload size)
+        LogMessage message = new LogMessage(logPayload, callback);
+
         // Check log payload length against protocol limits
-        int payloadLength = logPayload.getBytes().length;
+        int payloadLength = message.getPayloadSize();
         int maxRequestSize = config.getMaxRequestSize();
         if (payloadLength > maxRequestSize) {
             String errorMsg = "Log payload too long: " + payloadLength + " bytes exceeds " +
@@ -180,9 +183,6 @@ public class TglogClient implements AutoCloseable {
             }
             throw new TglogException(errorMsg, TglogException.ERR_LOG_TOO_LONG);
         }
-
-        // Create log message
-        LogMessage message = new LogMessage(logPayload, callback);
 
         // Update metrics
         metrics.incrementRequestMsg();
@@ -238,6 +238,9 @@ public class TglogClient implements AutoCloseable {
      *
      * @return Current metrics snapshot
      */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification = "Intentionally exposing metrics for application access and monitoring")
     public TglogMetrics getMetrics() {
         return metrics;
     }
@@ -258,21 +261,21 @@ public class TglogClient implements AutoCloseable {
      */
     public String printMetrics() {
         StringBuilder sb = new StringBuilder();
-        sb.append("TGLog Client Metrics:\n");
-        sb.append("====================\n");
-        sb.append(String.format("Requests:     %,d\n", metrics.getRequestMsgCount()));
-        sb.append(String.format("Enqueued:     %,d\n", metrics.getEnqueuedMsgCount()));
-        sb.append(String.format("Succeeded:    %,d\n", metrics.getSucceededMsgCount()));
-        sb.append(String.format("Failed:       %,d\n", metrics.getFailedMsgCount()));
-        sb.append(String.format("Timeout:      %,d\n", metrics.getTimeoutMsgCount()));
-        sb.append(String.format("Dropped:      %,d\n", metrics.getDroppedMsgCount()));
-        sb.append(String.format("Success Rate: %.2f%%\n", metrics.getSuccessRate() * 100));
-        sb.append(String.format("Queue Size:   %d / %d (%.1f%%)\n",
+        sb.append("TGLog Client Metrics:").append(System.lineSeparator());
+        sb.append("====================").append(System.lineSeparator());
+        sb.append(String.format("Requests:     %,d%n", metrics.getRequestMsgCount()));
+        sb.append(String.format("Enqueued:     %,d%n", metrics.getEnqueuedMsgCount()));
+        sb.append(String.format("Succeeded:    %,d%n", metrics.getSucceededMsgCount()));
+        sb.append(String.format("Failed:       %,d%n", metrics.getFailedMsgCount()));
+        sb.append(String.format("Timeout:      %,d%n", metrics.getTimeoutMsgCount()));
+        sb.append(String.format("Dropped:      %,d%n", metrics.getDroppedMsgCount()));
+        sb.append(String.format("Success Rate: %.2f%%%n", metrics.getSuccessRate() * 100));
+        sb.append(String.format("Queue Size:   %d / %d (%.1f%%)%n",
                 metrics.getMsgQueueSize(),
                 metrics.getMsgQueueCapacity(),
                 metrics.getQueueUtilization() * 100));
-        sb.append(String.format("Endpoints:    %d\n", metrics.getEndpointCount()));
-        sb.append(String.format("Connections:  %d\n", metrics.getActiveConnCount()));
+        sb.append(String.format("Endpoints:    %d%n", metrics.getEndpointCount()));
+        sb.append(String.format("Connections:  %d%n", metrics.getActiveConnCount()));
         return sb.toString();
     }
 

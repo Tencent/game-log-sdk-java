@@ -39,9 +39,9 @@ class TglogWorker implements Runnable {
     // State management
     private volatile State state = State.INIT;
     private final Object readyLock = new Object();
-    private volatile int readyConnCount = 0;
-    private volatile int failedConnCount = 0;
-    private volatile int initConnCount = 0;
+    private final AtomicInteger readyConnCount = new AtomicInteger(0);
+    private final AtomicInteger failedConnCount = new AtomicInteger(0);
+    private final AtomicInteger initConnCount = new AtomicInteger(0);
     private volatile boolean initStarted = false;
 
     // Wakeup optimization - avoid excessive wakeup calls
@@ -71,6 +71,9 @@ class TglogWorker implements Runnable {
     private LogMessage pendingMessage = null;
 
     // NIO components (accessed only by worker thread)
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR",
+        justification = "Selector is initialized in run() method before any use")
     private Selector selector;
     private Thread workerThread;
 
@@ -182,7 +185,7 @@ class TglogWorker implements Runnable {
             }
 
             // Then wait for connections to be ready
-            while (state == State.INIT && readyConnCount + failedConnCount < initConnCount) {
+            while (state == State.INIT && readyConnCount.get() + failedConnCount.get() < initConnCount.get()) {
                 long elapsed = System.currentTimeMillis() - startTime;
                 if (elapsed >= timeout) {
                     logger.log(TglogLogger.Level.ERROR,
@@ -199,15 +202,15 @@ class TglogWorker implements Runnable {
         }
 
         logger.log(TglogLogger.Level.DEBUG,
-            "Worker " + workerId + " wait complete: ready=" + readyConnCount +
-            ", failed=" + failedConnCount + ", init=" + initConnCount);
+            "Worker " + workerId + " wait complete: ready=" + readyConnCount.get() +
+            ", failed=" + failedConnCount.get() + ", init=" + initConnCount.get());
 
-        if (readyConnCount <= 0) {
+        if (readyConnCount.get() <= 0) {
             throw new RuntimeException("Worker " + workerId + " failed to initialize connections");
         }
 
         logger.log(TglogLogger.Level.INFO,
-            "Worker " + workerId + " started with " + readyConnCount + " ready connections");
+            "Worker " + workerId + " started with " + readyConnCount.get() + " ready connections");
     }
 
     /**
@@ -277,7 +280,7 @@ class TglogWorker implements Runnable {
                     TglogConnection conn = new TglogConnection(endpoint, config, logger);
                     conn.connect(selector);
                     connectingConns.add(conn);
-                    initConnCount++;
+                    initConnCount.incrementAndGet();
                     successfulConns++;
                 } catch (IOException e) {
                     logger.log(TglogLogger.Level.WARN,
@@ -317,7 +320,7 @@ class TglogWorker implements Runnable {
     private void waitForInitialConnections() throws IOException {
         long deadline = System.currentTimeMillis() + config.getConnectionTimeout();
 
-        while (readyConnCount + failedConnCount < initConnCount) {
+        while (readyConnCount.get() + failedConnCount.get() < initConnCount.get()) {
             long timeout = deadline - System.currentTimeMillis();
             if (timeout <= 0) {
                 break;
@@ -520,10 +523,10 @@ class TglogWorker implements Runnable {
                 // Notify if this is an init connection
                 if (state == State.INIT) {
                     synchronized (readyLock) {
-                        readyConnCount++;
+                        readyConnCount.incrementAndGet();
                         logger.log(TglogLogger.Level.INFO,
-                            "Worker " + workerId + " ready conn count: " + readyConnCount +
-                            "/" + initConnCount);
+                            "Worker " + workerId + " ready conn count: " + readyConnCount.get() +
+                            "/" + initConnCount.get());
                         readyLock.notifyAll();
                     }
                 }
@@ -542,10 +545,10 @@ class TglogWorker implements Runnable {
                 // Notify if this is an init connection
                 if (state == State.INIT) {
                     synchronized (readyLock) {
-                        failedConnCount++;
+                        failedConnCount.incrementAndGet();
                         logger.log(TglogLogger.Level.WARN,
-                            "Worker " + workerId + " failed conn count: " + failedConnCount +
-                            "/" + initConnCount);
+                            "Worker " + workerId + " failed conn count: " + failedConnCount.get() +
+                            "/" + initConnCount.get());
                         readyLock.notifyAll();
                     }
                 }
@@ -636,7 +639,7 @@ class TglogWorker implements Runnable {
             processed++;
 
             // Check if message fits in current batch
-            int msgSize = msg.getPayload().getBytes().length;
+            int msgSize = msg.getPayloadSize();
             int batchSize = currentBatch.getCurrentSize();
             int maxSize = config.getMaxRequestSize();
 
@@ -859,7 +862,7 @@ class TglogWorker implements Runnable {
     private int sendBatchUdp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
         // UDP sends first buffer only
         ByteBuffer buffer = buffers[0];
-        int totalSize = buffer.remaining();
+        // int totalSize = buffer.remaining(); // Unused, but kept for potential future logging
         int maxTries = Math.min(connections.size(), 3); // Try up to 3 connections
         int tryCount = 0;
 
@@ -1115,7 +1118,7 @@ class TglogWorker implements Runnable {
      * Replace expired connections.
      */
     private void replaceExpiredConnections() {
-        long now = System.currentTimeMillis();
+        // long now = System.currentTimeMillis(); // Unused, kept for potential future use
 
         for (int i = connections.size() - 1; i >= 0; i--) {
             TglogConnection conn = connections.get(i);

@@ -59,6 +59,9 @@ public class TglogMetrics {
      *
      * @param registry The CollectorRegistry to register metrics with
      */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification = "Registry must be shared with application for Prometheus integration")
     public TglogMetrics(CollectorRegistry registry) {
         this.registry = registry;
 
@@ -339,6 +342,9 @@ public class TglogMetrics {
      *
      * @return The CollectorRegistry
      */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification = "Registry must be exposed for application to set up Prometheus HTTP endpoint")
     public CollectorRegistry getRegistry() {
         return registry;
     }
