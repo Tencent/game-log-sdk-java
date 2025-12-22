@@ -36,17 +36,13 @@ public class CallbackValidationTest {
         AtomicReference<String> errorMsg = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 System.out.println("  ERROR: onSuccess should not be called!");
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 callbackInvoked.incrementAndGet();
-                errorCode.set(code);
-                errorMsg.set(msg);
+                errorCode.set(exception.getErrorCode().getCode());
+                errorMsg.set(exception.getMessage());
                 latch.countDown();
             }
         };
@@ -75,14 +71,10 @@ public class CallbackValidationTest {
         AtomicInteger callbackInvoked = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(1);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 System.out.println("  ERROR: onSuccess should not be called!");
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 callbackInvoked.incrementAndGet();
                 latch.countDown();
             }
@@ -113,16 +105,12 @@ public class CallbackValidationTest {
         AtomicInteger errorCode = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(1);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 System.out.println("  ERROR: onSuccess should not be called!");
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 callbackInvoked.incrementAndGet();
-                errorCode.set(code);
+                errorCode.set(exception.getErrorCode().getCode());
                 latch.countDown();
             }
         };

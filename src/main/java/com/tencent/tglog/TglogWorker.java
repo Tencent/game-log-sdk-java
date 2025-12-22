@@ -943,7 +943,7 @@ class TglogWorker implements Runnable {
                 metrics.incrementSucceededMsg();
             }
         } else {
-            currentBatch.notifyAllFailed(errorCode.getCode(), errorCode.getMessage());
+            currentBatch.notifyAllFailed(errorCode);
 
             if (errorCode == TglogErrorCode.SEND_TIMEOUT) {
                 for (int i = 0; i < msgCount; i++) {

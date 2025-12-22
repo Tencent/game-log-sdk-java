@@ -68,21 +68,19 @@ public class Example {
         // 2. 创建客户端
         try (TglogClient client = new TglogClient(config)) {
 
-            // 3. 发送日志
-            client.send("battle|winner=player1|loser=player2\n", new TglogCallback() {
-                @Override
-                public void onSuccess(String payload) {
+            // 3. 发送日志 (Lambda callback)
+            client.send("battle|winner=player1|loser=player2\n", (payload, exception) -> {
+                if (exception == null) {
                     System.out.println("发送成功");
-                }
-
-                @Override
-                public void onError(String payload, int code, String msg) {
-                    System.err.println("发送失败: " + msg);
+                } else {
+                    System.err.println("发送失败: " + exception.getMessage());
                 }
             });
 
-            // 4. 等待发送完成
-            Thread.sleep(1000);
+            // 或使用 CompletableFuture
+            client.send("log\n")
+                  .thenRun(() -> System.out.println("Success"))
+                  .get(); // 等待完成
         }
     }
 }

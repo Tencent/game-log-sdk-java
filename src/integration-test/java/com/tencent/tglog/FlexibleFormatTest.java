@@ -39,15 +39,11 @@ public class FlexibleFormatTest {
         AtomicInteger callbackInvoked = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(1);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 callbackInvoked.incrementAndGet();
                 latch.countDown();
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 System.out.println("  ERROR: onError should not be called!");
             }
         };
@@ -74,15 +70,11 @@ public class FlexibleFormatTest {
         AtomicInteger callbackInvoked = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(1);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 callbackInvoked.incrementAndGet();
                 latch.countDown();
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 System.out.println("  ERROR: onError should not be called!");
             }
         };
@@ -109,15 +101,11 @@ public class FlexibleFormatTest {
         AtomicInteger callbackInvoked = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(1);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 callbackInvoked.incrementAndGet();
                 latch.countDown();
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 System.out.println("  ERROR: onError should not be called!");
             }
         };
@@ -144,15 +132,11 @@ public class FlexibleFormatTest {
         AtomicInteger callbackInvoked = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(1);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 callbackInvoked.incrementAndGet();
                 latch.countDown();
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 System.out.println("  ERROR: onError should not be called!");
             }
         };

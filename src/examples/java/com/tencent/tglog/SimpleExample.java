@@ -47,20 +47,15 @@ public class SimpleExample {
                 final int userId = i + 100;
                 String log = String.format("test|userid=%d|action=battle|result=win\n", userId);
 
-                client.send(log, new TglogCallback() {
-                    @Override
-                    public void onSuccess(String payload) {
+                client.send(log, (payload, exception) -> {
+                    if (exception == null) {
                         successCount2.incrementAndGet();
                         System.out.println("  Success: user " + userId);
-                        latch2.countDown();
-                    }
-
-                    @Override
-                    public void onError(String payload, int errorCode, String errorMessage) {
+                    } else {
                         failCount2.incrementAndGet();
-                        System.err.println("  Failed: user " + userId + " - " + errorMessage);
-                        latch2.countDown();
+                        System.err.println("  Failed: user " + userId + " - " + exception.getMessage());
                     }
+                    latch2.countDown();
                 });
             }
 
@@ -79,18 +74,13 @@ public class SimpleExample {
 
             for (int i = 0; i < 1000; i++) {
                 String log = String.format("bulk|seq=%d|data=test_data_%d\n", i, i);
-                client.send(log, new TglogCallback() {
-                    @Override
-                    public void onSuccess(String payload) {
+                client.send(log, (payload, exception) -> {
+                    if (exception == null) {
                         successCount3.incrementAndGet();
-                        latch3.countDown();
-                    }
-
-                    @Override
-                    public void onError(String payload, int errorCode, String errorMessage) {
+                    } else {
                         failCount3.incrementAndGet();
-                        latch3.countDown();
                     }
+                    latch3.countDown();
                 });
             }
 

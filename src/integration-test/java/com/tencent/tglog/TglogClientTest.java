@@ -75,19 +75,14 @@ public class TglogClientTest {
                 new CountDownLatch(testConfig.messageCount) : null;
 
         // Callback
-        TglogCallback callback = testConfig.withCallback ? new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = testConfig.withCallback ? (payload, exception) -> {
+            if (exception == null) {
                 successCount.incrementAndGet();
-                latch.countDown();
-            }
-
-            @Override
-            public void onError(String payload, int errorCode, String errorMessage) {
+            } else {
                 failureCount.incrementAndGet();
-                System.err.println("Send failed: " + errorMessage);
-                latch.countDown();
+                System.err.println("Send failed: " + exception.getMessage());
             }
+            latch.countDown();
         } : null;
 
         // Create rate limiter if rate limit is specified

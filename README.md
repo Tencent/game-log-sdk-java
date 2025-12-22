@@ -220,21 +220,27 @@ TglogConfig config = TglogConfig.createTcp("logs.game.com", 8080)
 // 创建客户端 (AutoCloseable)
 try (TglogClient client = new TglogClient(config)) {
 
-    // 发送日志 (fire and forget)
-    client.send("battle|winner=1|loser=2|score=100\n");
+    // 方式1: 使用 CompletableFuture (推荐)
+    client.send("battle|winner=1|loser=2|score=100\n")
+          .thenRun(() -> System.out.println("发送成功"))
+          .exceptionally(ex -> {
+              System.err.println("发送失败: " + ex.getMessage());
+              return null;
+          });
 
-    // 发送日志 (带回调)
-    client.send("login|userid=12345\n", new TglogCallback() {
-        @Override
-        public void onSuccess(String payload) {
+    // 方式2: 使用 Lambda callback (Kafka 风格)
+    client.send("login|userid=12345\n", (payload, exception) -> {
+        if (exception == null) {
             System.out.println("发送成功: " + payload);
-        }
-
-        @Override
-        public void onError(String payload, int errorCode, String errorMessage) {
-            System.err.println("发送失败: " + errorMessage);
+        } else {
+            System.err.println("发送失败: " + exception.getMessage());
         }
     });
+
+    // 方式3: 链式调用
+    client.send("log1\n")
+          .thenCompose(v -> client.send("log2\n"))
+          .thenRun(() -> System.out.println("全部发送完成"));
 
     // 获取性能指标
     TglogMetrics metrics = client.getMetrics();
@@ -435,19 +441,24 @@ public class GameServer {
         String log = String.format("battle|winner=%d|loser=%d|score=%d\n",
             winnerId, loserId, score);
 
-        logClient.send(log, new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        // 方式1: 使用 Lambda callback
+        logClient.send(log, (payload, exception) -> {
+            if (exception == null) {
                 // 发送成功，可以更新数据库
                 updateBattleStats(winnerId, loserId);
-            }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
+            } else {
                 // 发送失败，记录到本地文件
                 saveToLocalFile(payload);
             }
         });
+
+        // 方式2: 使用 CompletableFuture
+        logClient.send(log)
+                 .thenRun(() -> updateBattleStats(winnerId, loserId))
+                 .exceptionally(ex -> {
+                     saveToLocalFile(log);
+                     return null;
+                 });
     }
 
     public void shutdown() {
@@ -640,9 +651,9 @@ public TglogClient(TglogConfig config) throws TglogException
 
 #### 主要方法
 ```java
-// 发送日志
-public void send(String logPayload) throws TglogException
-public void send(String logPayload, TglogCallback callback) throws TglogException
+// 发送日志 (返回 CompletableFuture)
+public CompletableFuture<Void> send(String logPayload) throws TglogException
+public CompletableFuture<Void> send(String logPayload, TglogCallback callback) throws TglogException
 
 // 刷新待发送消息
 public boolean flush(long timeoutMs)
@@ -674,10 +685,35 @@ public TglogConfig setBatchingMaxDelayMs(int delayMs)
 ### TglogCallback
 
 ```java
+@FunctionalInterface
 public interface TglogCallback {
-    void onSuccess(String payload);
-    void onError(String payload, int errorCode, String errorMessage);
+    /**
+     * Called when send operation completes.
+     * @param payload The log payload
+     * @param exception null if success, otherwise contains error details
+     */
+    void onCompletion(String payload, TglogException exception);
 }
+```
+
+**使用示例：**
+```java
+// Lambda 表达式
+client.send("log\n", (payload, exception) -> {
+    if (exception == null) {
+        System.out.println("Success");
+    } else {
+        System.err.println("Failed: " + exception.getMessage());
+    }
+});
+
+// CompletableFuture
+client.send("log\n")
+      .thenRun(() -> System.out.println("Success"))
+      .exceptionally(ex -> {
+          System.err.println("Failed");
+          return null;
+      });
 ```
 
 ## 许可证

@@ -45,18 +45,13 @@ public class ComprehensiveTest {
         AtomicInteger successCount = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(4);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 successCount.incrementAndGet();
-                latch.countDown();
+            } else {
+                System.out.println("  ERROR: " + exception.getMessage());
             }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
-                System.out.println("  ERROR: " + msg);
-                latch.countDown();
-            }
+            latch.countDown();
         };
 
         client.send("game|action=login|user=123\n", callback);
@@ -79,12 +74,8 @@ public class ComprehensiveTest {
 
         // Test null payload
         try {
-            client.send(null, new TglogCallback() {
-                @Override
-                public void onSuccess(String payload) {}
-
-                @Override
-                public void onError(String payload, int code, String msg) {
+            client.send(null, (payload, exception) -> {
+                if (exception != null) {
                     callbackCount.incrementAndGet();
                 }
             });
@@ -94,12 +85,8 @@ public class ComprehensiveTest {
 
         // Test empty payload
         try {
-            client.send("", new TglogCallback() {
-                @Override
-                public void onSuccess(String payload) {}
-
-                @Override
-                public void onError(String payload, int code, String msg) {
+            client.send("", (payload, exception) -> {
+                if (exception != null) {
                     callbackCount.incrementAndGet();
                 }
             });
@@ -116,12 +103,8 @@ public class ComprehensiveTest {
         sb.append("\n");
 
         try {
-            client.send(sb.toString(), new TglogCallback() {
-                @Override
-                public void onSuccess(String payload) {}
-
-                @Override
-                public void onError(String payload, int code, String msg) {
+            client.send(sb.toString(), (payload, exception) -> {
+                if (exception != null) {
                     callbackCount.incrementAndGet();
                 }
             });
@@ -141,18 +124,13 @@ public class ComprehensiveTest {
         AtomicInteger successCount = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(100);
 
-        TglogCallback callback = new TglogCallback() {
-            @Override
-            public void onSuccess(String payload) {
+        TglogCallback callback = (payload, exception) -> {
+            if (exception == null) {
                 successCount.incrementAndGet();
-                latch.countDown();
+            } else {
+                System.out.println("  ERROR: " + exception.getMessage());
             }
-
-            @Override
-            public void onError(String payload, int code, String msg) {
-                System.out.println("  ERROR: " + msg);
-                latch.countDown();
-            }
+            latch.countDown();
         };
 
         for (int i = 0; i < 100; i++) {

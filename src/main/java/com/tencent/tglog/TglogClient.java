@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -140,11 +141,15 @@ public class TglogClient implements AutoCloseable {
      * This method is thread-safe and non-blocking. It uses lock-free queues
      * to distribute messages to worker threads.
      *
+     * This method both accepts a callback and returns
+     * a CompletableFuture, allowing flexible async programming styles.
+     *
      * @param logPayload Log message (must end with \n)
      * @param callback Callback for send result (can be null)
+     * @return CompletableFuture that completes when the message is sent
      * @throws TglogException if client is closed or queue is full
      */
-    public void send(String logPayload, TglogCallback callback) throws TglogException {
+    public CompletableFuture<Void> send(String logPayload, TglogCallback callback) throws TglogException {
         // Validate client state - synchronous validation errors only throw exception
         if (closed.get()) {
             throw new TglogException(TglogErrorCode.PRODUCER_CLOSED, "Client is closed");
@@ -160,8 +165,30 @@ public class TglogClient implements AutoCloseable {
             throw new TglogException(TglogErrorCode.BAD_LOG, "Log payload must end with '\\n'");
         }
 
+        // Create CompletableFuture for this send operation
+        CompletableFuture<Void> future = new CompletableFuture<>();
+
+        // Wrap user callback to also complete the future
+        TglogCallback wrappedCallback = (payload, exception) -> {
+            // Call user callback if provided
+            if (callback != null) {
+                try {
+                    callback.onCompletion(payload, exception);
+                } catch (Exception e) {
+                    logger.warn("Exception in user callback", e);
+                }
+            }
+
+            // Complete the future
+            if (exception == null) {
+                future.complete(null);
+            } else {
+                future.completeExceptionally(exception);
+            }
+        };
+
         // Create log message (which will cache the payload size)
-        LogMessage message = new LogMessage(logPayload, callback);
+        LogMessage message = new LogMessage(logPayload, wrappedCallback);
 
         // Check log payload length against protocol limits - synchronous validation
         int payloadLength = message.getPayloadSize();
@@ -179,21 +206,24 @@ public class TglogClient implements AutoCloseable {
         TglogWorker worker = selectWorker();
 
         // Enqueue message - synchronous enqueue failure throws exception
-        // Asynchronous send failures will be reported via callback
+        // Asynchronous send failures will be reported via callback and future
         if (!worker.enqueue(message)) {
             metrics.incrementDroppedMsg();
             throw new TglogException(TglogErrorCode.SEND_QUEUE_IS_FULL, "Message queue is full");
         }
+
+        return future;
     }
 
     /**
-     * Send a log message without callback (fire and forget).
+     * Send a log message without callback.
      *
      * @param logPayload Log message
+     * @return CompletableFuture that completes when the message is sent
      * @throws TglogException if send fails
      */
-    public void send(String logPayload) throws TglogException {
-        send(logPayload, null);
+    public CompletableFuture<Void> send(String logPayload) throws TglogException {
+        return send(logPayload, null);
     }
 
     /**

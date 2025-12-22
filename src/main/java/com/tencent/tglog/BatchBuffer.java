@@ -230,7 +230,7 @@ class BatchBuffer {
             LogMessage message = messages.get(i);
             if (message.getCallback() != null) {
                 try {
-                    message.getCallback().onSuccess(message.getPayload());
+                    message.getCallback().onCompletion(message.getPayload(), null);
                 } catch (Exception e) {
                     // Ignore callback exceptions
                 }
@@ -252,16 +252,16 @@ class BatchBuffer {
      * Notify all messages as failed and clear batch.
      *
      * @param errorCode Error code
-     * @param errorMessage Error message
      */
     @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
         value = "DE_MIGHT_IGNORE",
         justification = "Intentionally ignoring callback exceptions to prevent one bad callback from affecting others")
-    public void notifyAllFailed(int errorCode, String errorMessage) {
+    public void notifyAllFailed(TglogErrorCode errorCode) {
+        TglogException exception = new TglogException(errorCode);
         for (LogMessage message : messages) {
             if (message.getCallback() != null) {
                 try {
-                    message.getCallback().onError(message.getPayload(), errorCode, errorMessage);
+                    message.getCallback().onCompletion(message.getPayload(), exception);
                 } catch (Exception e) {
                     // Ignore callback exceptions
                 }
