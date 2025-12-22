@@ -1437,6 +1437,81 @@ class TglogWorker implements Runnable {
     }
 
     /**
+     * Drain connection buffers before closing (like C version's tglog_worker_drain_and_stop).
+     * This ensures all buffered data in connection output buffers is sent before closing.
+     */
+    private void drainConnectionBuffers() {
+        long stopTimeout = config.getStopTimeout();
+        long startTime = System.currentTimeMillis();
+        int drainAttempts = 0;
+        final int maxDrainAttempts = (int) (stopTimeout / 5); // Check every 5ms
+
+        logger.info("Worker {} draining connection buffers (timeout: {}ms)", workerId, stopTimeout);
+
+        while (drainAttempts < maxDrainAttempts) {
+            boolean allDrained = true;
+
+            // Check all active connections
+            for (TglogConnection conn : connections) {
+                if (conn.hasBufferedData()) {
+                    allDrained = false;
+                    int bufferedSize = conn.getBufferedDataSize();
+                    logger.debug("Worker {} connection {} has {} bytes buffered, flushing...",
+                            workerId, conn.getEndpoint(), bufferedSize);
+
+                    // Try to flush the connection
+                    conn.tryFlush();
+                }
+            }
+
+            // If all buffers are drained, we're done
+            if (allDrained) {
+                long elapsed = System.currentTimeMillis() - startTime;
+                logger.info("Worker {} all connection buffers drained in {}ms", workerId, elapsed);
+                return;
+            }
+
+            // Check if we've exceeded the timeout
+            long elapsed = System.currentTimeMillis() - startTime;
+            if (elapsed >= stopTimeout) {
+                logger.warn("Worker {} drain timeout after {}ms, some data may be lost", workerId, elapsed);
+                return;
+            }
+
+            // Use selector to wait for connections to become writable (like C's event_base)
+            try {
+                // Short timeout to allow data to be sent
+                int readyKeys = selector.select(5);
+
+                if (readyKeys > 0) {
+                    // Process writable connections
+                    Iterator<SelectionKey> keyIterator = selector.selectedKeys().iterator();
+                    while (keyIterator.hasNext()) {
+                        SelectionKey key = keyIterator.next();
+                        keyIterator.remove();
+
+                        if (key.isValid() && key.isWritable()) {
+                            TglogConnection conn = (TglogConnection) key.attachment();
+                            if (conn != null) {
+                                conn.tryFlush();
+                            }
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                logger.warn("Worker {} error during drain: {}", workerId, e.getMessage());
+                break;
+            }
+
+            drainAttempts++;
+        }
+
+        long elapsed = System.currentTimeMillis() - startTime;
+        logger.warn("Worker {} drain completed after {} attempts ({}ms), may have unflushed data",
+                workerId, drainAttempts, elapsed);
+    }
+
+    /**
      * Cleanup resources.
      */
     private void cleanup() {
@@ -1467,13 +1542,24 @@ class TglogWorker implements Runnable {
             sendBatch(false);
         }
 
-        // Cancel all pending close tasks (SDK is shutting down, we've already flushed)
-        logger.info("Worker {} cancelling {} pending close tasks", workerId, pendingCloseTasks.size());
+        // Drain connection buffers (like C version's tglog_worker_drain_and_stop)
+        drainConnectionBuffers();
+
+        // Cancel all pending close tasks and close those connections immediately
+        // (SDK is shutting down, we've already flushed)
+        logger.info("Worker {} cancelling {} pending close tasks and closing connections",
+                workerId, pendingCloseTasks.size());
         for (Map.Entry<TglogConnection, ScheduledFuture<?>> entry : pendingCloseTasks.entrySet()) {
+            TglogConnection conn = entry.getKey();
             ScheduledFuture<?> task = entry.getValue();
+
+            // Cancel the scheduled close task
             if (!task.isDone()) {
                 task.cancel(false);
             }
+
+            // Close the connection immediately
+            conn.close();
         }
         pendingCloseTasks.clear();
 
