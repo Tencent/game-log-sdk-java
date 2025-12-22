@@ -448,18 +448,18 @@ class TglogWorker implements Runnable {
         Set<InetSocketAddress> added = new HashSet<>(newSet);
         added.removeAll(oldSet);
 
-        // Remove connections for removed endpoints
+        // Add connections for new endpoints first (to ensure availability)
+        for (InetSocketAddress endpoint : added) {
+            addConnectionsForEndpoint(endpoint);
+            metrics.incrementAddEndpoint();
+        }
+
+        // Remove connections for removed endpoints after adding new ones
         for (InetSocketAddress endpoint : removed) {
             removeConnectionsByEndpoint(endpoint);
             unavailableEndpoints.remove(endpoint.toString());
             endpointRetryCount.remove(endpoint.toString());
             metrics.incrementRemoveEndpoint();
-        }
-
-        // Add connections for new endpoints
-        for (InetSocketAddress endpoint : added) {
-            addConnectionsForEndpoint(endpoint);
-            metrics.incrementAddEndpoint();
         }
 
         // Update current endpoints
