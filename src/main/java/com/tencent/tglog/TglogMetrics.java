@@ -388,10 +388,48 @@ public class TglogMetrics {
         return sb.toString();
     }
 
+    /**
+     * Get human-readable metrics string with all metrics.
+     *
+     * @return Formatted metrics string
+     */
     @Override
     public String toString() {
-        return String.format("TglogMetrics{requests=%d, succeeded=%d, failed=%d, successRate=%.2f%%, queueSize=%d/%d}",
-                getRequestMsgCount(), getSucceededMsgCount(), getFailedMsgCount(),
-                getSuccessRate() * 100, getMsgQueueSize(), getMsgQueueCapacity());
+        StringBuilder sb = new StringBuilder();
+        sb.append("TGLog Metrics:").append(System.lineSeparator());
+        sb.append("====================").append(System.lineSeparator());
+
+        // Message metrics
+        sb.append(String.format("Requests:       %,d%n", getRequestMsgCount()));
+        sb.append(String.format("Enqueued:       %,d%n", getEnqueuedMsgCount()));
+        sb.append(String.format("Dequeued:       %,d%n", getDequeuedMsgCount()));
+        sb.append(String.format("Succeeded:      %,d%n", getSucceededMsgCount()));
+        sb.append(String.format("Failed:         %,d%n", getFailedMsgCount()));
+        sb.append(String.format("Timeout:        %,d%n", getTimeoutMsgCount()));
+        sb.append(String.format("Retry:          %,d%n", getRetryMsgCount()));
+        sb.append(String.format("Dropped:        %,d%n", getDroppedMsgCount()));
+        sb.append(String.format("Success Rate:   %.2f%%%n", getSuccessRate() * 100));
+
+        // Queue metrics
+        sb.append(String.format("Queue Size:     %,d / %,d (%.1f%%)%n",
+                getMsgQueueSize(),
+                getMsgQueueCapacity(),
+                getQueueUtilization() * 100));
+
+        // Connection metrics
+        sb.append(String.format("Connections:    %,d active%n", getActiveConnCount()));
+        sb.append(String.format("Conn Opened:    %,d%n", getOpenedConnCount()));
+        sb.append(String.format("Conn Closed:    %,d%n", getClosedConnCount()));
+        sb.append(String.format("Conn Errors:    %,d%n", getErrorConnCount()));
+
+        // Endpoint metrics
+        sb.append(String.format("Endpoints:      %,d%n", getEndpointCount()));
+        sb.append(String.format("EP Added:       %,d%n", getAddEndpointCount()));
+        sb.append(String.format("EP Removed:     %,d%n", getRemoveEndpointCount()));
+
+        // Rescued bytes
+        sb.append(String.format("Rescued Bytes:  %,d%n", getRescuedMsgBytes()));
+
+        return sb.toString();
     }
 }

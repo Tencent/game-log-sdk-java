@@ -32,7 +32,7 @@ public class ComprehensiveTest {
             Thread.sleep(2000);
 
             System.out.println("\n=== Final Metrics ===");
-            System.out.println(client.printMetrics());
+            System.out.println(client.getMetricsString(false));
 
             System.out.println("\n=== All Tests Passed! ===");
         }

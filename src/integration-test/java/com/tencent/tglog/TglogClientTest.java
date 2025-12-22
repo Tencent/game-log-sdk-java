@@ -187,9 +187,9 @@ public class TglogClientTest {
         // Print detailed metrics if debug enabled
         if (testConfig.debug) {
             System.out.println("\nDetailed Metrics:");
-            System.out.println(client.printMetrics());
+            System.out.println(client.getMetricsString(false));
             System.out.println("\nMetrics JSON:");
-            System.out.println(client.getMetricsJson());
+            System.out.println(client.getMetricsString(true));
         }
 
         // Close client

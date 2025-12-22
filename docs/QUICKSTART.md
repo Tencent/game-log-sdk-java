@@ -241,10 +241,10 @@ TglogConfig config = TglogConfig.createTcp("host", port)
 TglogMetrics metrics = client.getMetrics();
 
 // 打印可读格式
-System.out.println(client.printMetrics());
+System.out.println(client.getMetricsString(false));
 
 // 导出JSON
-String json = client.getMetricsJson();
+String json = client.getMetricsString(true);
 System.out.println(json);
 
 // 定期监控

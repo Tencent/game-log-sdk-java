@@ -259,10 +259,10 @@ public class ProgrammaticMetricsExample {
         System.out.println("成功率: " + metrics.getSuccessRate() * 100 + "%");
 
         // 或获取 JSON 格式
-        System.out.println(client.getMetricsJson());
+        System.out.println(client.getMetricsString(true));
 
         // 或获取格式化字符串
-        System.out.println(client.printMetrics());
+        System.out.println(client.getMetricsString(false));
 
         client.close();
     }

@@ -239,7 +239,7 @@ try (TglogClient client = new TglogClient(config)) {
     // 获取性能指标
     TglogMetrics metrics = client.getMetrics();
     System.out.println("成功率: " + metrics.getSuccessRate() * 100 + "%");
-    System.out.println(client.printMetrics());
+    System.out.println(client.getMetricsString(false));
 
 } // 自动关闭，flush所有待发送消息
 ```
@@ -383,10 +383,10 @@ System.out.println("成功率: " + metrics.getSuccessRate() * 100 + "%");
 System.out.println("队列利用率: " + metrics.getQueueUtilization() * 100 + "%");
 
 // 打印可读格式
-System.out.println(client.printMetrics());
+System.out.println(client.getMetricsString(false));
 
 // 导出JSON格式
-String json = client.getMetricsJson();
+String json = client.getMetricsString(true);
 ```
 
 ## 游戏服务器集成
@@ -584,7 +584,7 @@ java -Dorg.slf4j.simpleLogger.defaultLogLevel=debug \
 // 定期打印指标
 ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 scheduler.scheduleAtFixedRate(() -> {
-    System.out.println(client.printMetrics());
+    System.out.println(client.getMetricsString(false));
 }, 0, 10, TimeUnit.SECONDS);
 ```
 
@@ -649,8 +649,7 @@ public boolean flush(long timeoutMs)
 
 // 获取指标
 public TglogMetrics getMetrics()
-public String getMetricsJson()
-public String printMetrics()
+public String getMetricsString(boolean json)
 
 // 关闭客户端
 public void close()

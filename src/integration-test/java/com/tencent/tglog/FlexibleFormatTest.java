@@ -29,7 +29,7 @@ public class FlexibleFormatTest {
 
             System.out.println("\n=== All Format Tests Passed! ===");
             System.out.println("\nMetrics:");
-            System.out.println(client.printMetrics());
+            System.out.println(client.getMetricsString(false));
         }
     }
 

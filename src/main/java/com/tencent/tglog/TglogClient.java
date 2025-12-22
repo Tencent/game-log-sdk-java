@@ -231,38 +231,15 @@ public class TglogClient implements AutoCloseable {
     }
 
     /**
-     * Get metrics as JSON string.
+     * Get metrics as string.
      *
-     * @return JSON representation of metrics
+     * @param json true for JSON format, false for human-readable format
+     * @return Metrics string
      */
-    public String getMetricsJson() {
-        return metrics.toJson();
+    public String getMetricsString(boolean json) {
+        return json ? metrics.toJson() : metrics.toString();
     }
 
-    /**
-     * Print metrics to string.
-     *
-     * @return Human-readable metrics
-     */
-    public String printMetrics() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("TGLog Client Metrics:").append(System.lineSeparator());
-        sb.append("====================").append(System.lineSeparator());
-        sb.append(String.format("Requests:     %,d%n", metrics.getRequestMsgCount()));
-        sb.append(String.format("Enqueued:     %,d%n", metrics.getEnqueuedMsgCount()));
-        sb.append(String.format("Succeeded:    %,d%n", metrics.getSucceededMsgCount()));
-        sb.append(String.format("Failed:       %,d%n", metrics.getFailedMsgCount()));
-        sb.append(String.format("Timeout:      %,d%n", metrics.getTimeoutMsgCount()));
-        sb.append(String.format("Dropped:      %,d%n", metrics.getDroppedMsgCount()));
-        sb.append(String.format("Success Rate: %.2f%%%n", metrics.getSuccessRate() * 100));
-        sb.append(String.format("Queue Size:   %d / %d (%.1f%%)%n",
-                metrics.getMsgQueueSize(),
-                metrics.getMsgQueueCapacity(),
-                metrics.getQueueUtilization() * 100));
-        sb.append(String.format("Endpoints:    %d%n", metrics.getEndpointCount()));
-        sb.append(String.format("Connections:  %d%n", metrics.getActiveConnCount()));
-        return sb.toString();
-    }
 
     /**
      * Flush all pending messages.

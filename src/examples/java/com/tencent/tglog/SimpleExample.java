@@ -109,7 +109,7 @@ public class SimpleExample {
 
             // Print metrics
             System.out.println("Performance Metrics:");
-            System.out.println(client.printMetrics());
+            System.out.println(client.getMetricsString(false));
 
             // Verify metrics
             TglogMetrics metrics = client.getMetrics();

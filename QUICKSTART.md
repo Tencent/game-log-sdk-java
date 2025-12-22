@@ -102,7 +102,7 @@ try {
 ## 4. 查看指标
 
 ```java
-System.out.println(client.printMetrics());
+System.out.println(client.getMetricsString(false));
 ```
 
 ## 更多信息
