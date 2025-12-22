@@ -1354,9 +1354,16 @@ class TglogWorker implements Runnable {
     private void cleanup() {
         logger.info("Worker {} cleaning up", workerId);
 
-        // Flush remaining messages (without retry)
-        logger.info("Worker {} flushing {} remaining messages", workerId, messageQueue.size());
+        // Count total remaining messages (queue + batch + pending)
+        int queueSize = messageQueue.size();
+        int batchSize = currentBatch.size();
+        int pendingSize = pendingMessage != null ? 1 : 0;
+        int totalRemaining = queueSize + batchSize + pendingSize;
 
+        logger.info("Worker {} flushing {} remaining messages (queue={}, batch={}, pending={})",
+                workerId, totalRemaining, queueSize, batchSize, pendingSize);
+
+        // Flush remaining messages (without retry)
         while (!messageQueue.isEmpty() || pendingMessage != null) {
             processMessages();
 
@@ -1368,6 +1375,7 @@ class TglogWorker implements Runnable {
 
         // Send final batch if any
         if (!currentBatch.isEmpty()) {
+            logger.info("Worker {} sending final batch with {} messages", workerId, currentBatch.size());
             sendBatch(false);
         }
 
