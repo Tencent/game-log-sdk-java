@@ -1,5 +1,7 @@
 package com.tencent.tglog;
 
+import com.google.common.util.concurrent.RateLimiter;
+
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -26,6 +28,8 @@ public class TglogClientTest {
         System.out.println("  Workers:       " + testConfig.workerNum);
         System.out.println("  Batch Size:    " + testConfig.batchSize);
         System.out.println("  With Callback: " + testConfig.withCallback);
+        System.out.println("  Rate Limit:    " + (testConfig.rateLimit > 0 ?
+            String.format("%,d msg/s", testConfig.rateLimit) : "unlimited"));
         printSeparator();
 
         try {
@@ -86,12 +90,21 @@ public class TglogClientTest {
             }
         } : null;
 
+        // Create rate limiter if rate limit is specified
+        RateLimiter rateLimiter = testConfig.rateLimit > 0 ?
+                RateLimiter.create(testConfig.rateLimit) : null;
+
         // Send messages
         long startTime = System.currentTimeMillis();
         long lastReportTime = startTime;
         int reportInterval = testConfig.messageCount / 10; // Report every 10%
 
         for (int i = 0; i < testConfig.messageCount; i++) {
+            // Apply rate limiting if enabled
+            if (rateLimiter != null) {
+                rateLimiter.acquire();
+            }
+
             String log = logs[i % logs.length];
 
             try {
@@ -224,6 +237,10 @@ public class TglogClientTest {
                 case "--debug":
                     config.debug = true;
                     break;
+                case "-r":
+                case "--rate-limit":
+                    config.rateLimit = Long.parseLong(args[++i]);
+                    break;
                 case "--help":
                     printUsage();
                     System.exit(0);
@@ -254,6 +271,7 @@ public class TglogClientTest {
         System.out.println("  -m, --messages <count>   Number of messages to send (default: 100000)");
         System.out.println("  -w, --workers <count>    Number of worker threads (default: 8)");
         System.out.println("  -b, --batch-size <size>  Batch size (default: 50)");
+        System.out.println("  -r, --rate-limit <rate>  Rate limit in messages/sec (default: 500000, 0 = unlimited)");
         System.out.println("  --tcp                    Use TCP protocol (default)");
         System.out.println("  --udp                    Use UDP protocol");
         System.out.println("  -c, --callback           Enable callbacks (slower but tracks results)");
@@ -267,6 +285,7 @@ public class TglogClientTest {
         int messageCount = 100000;
         int workerNum = 8;
         int batchSize = 50;
+        long rateLimit = 500000; // Default: 500,000 messages/sec
         TglogConfig.Protocol protocol = TglogConfig.Protocol.TCP;
         boolean withCallback = false;
         boolean debug = false;

@@ -14,10 +14,10 @@ echo "Running Performance Test..."
 echo "==========================="
 echo ""
 
-# Copy dependencies if not exists
+# Copy dependencies if not exists (including test scope for Guava)
 if [ ! -d "target/lib" ]; then
     echo "Copying Maven dependencies..."
-    mvn -q dependency:copy-dependencies -DoutputDirectory=target/lib -DincludeScope=compile
+    mvn -q dependency:copy-dependencies -DoutputDirectory=target/lib -DincludeScope=test
 fi
 
 # Compile integration tests if needed
@@ -63,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             PARAMS="$PARAMS -b $2"
             shift 2
             ;;
+        -r|--rate-limit)
+            PARAMS="$PARAMS -r $2"
+            shift 2
+            ;;
         --tcp)
             PARAMS="$PARAMS --tcp"
             shift
@@ -93,12 +97,6 @@ done
 
 # Build classpath with Maven dependencies
 CLASSPATH="target/classes:target/integration-test-classes"
-
-# Copy dependencies if not exists
-if [ ! -d "target/lib" ]; then
-    echo "Copying Maven dependencies..."
-    mvn -q dependency:copy-dependencies -DoutputDirectory=target/lib -DincludeScope=compile
-fi
 
 # Add all jars from target/lib to classpath
 if [ -d "target/lib" ]; then
