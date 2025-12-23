@@ -124,8 +124,8 @@ class TglogConnection {
         // Connect to endpoint (for UDP this just sets the default destination)
         udpChannel.connect(endpoint);
 
-        // Register for write operations
-        selectionKey = udpChannel.register(selector, SelectionKey.OP_WRITE, this);
+        // Register with no events by default (will register OP_WRITE when needed)
+        selectionKey = udpChannel.register(selector, 0, this);
 
         // UDP is immediately "connected"
         finishConnect();
@@ -145,9 +145,10 @@ class TglogConnection {
                     lastActiveTime.set(System.currentTimeMillis());
                     retryCount = 0;
 
-                    // Switch to write interest
+                    // Don't register OP_WRITE by default to avoid busy-wait
+                    // OP_WRITE will be registered only when we have data to send
                     if (selectionKey != null) {
-                        selectionKey.interestOps(SelectionKey.OP_WRITE);
+                        selectionKey.interestOps(0);  // No events by default
                     }
 
                     logger.info("Connected to {}", endpoint);
@@ -205,6 +206,9 @@ class TglogConnection {
                 outputBuffer.offer(copy);
                 outputBufferSize += originalRemaining;
 
+                // Register OP_WRITE to get notified when socket becomes writable
+                registerWriteInterest();
+
                 logger.debug("Buffered {} bytes (total buffered: {})", originalRemaining, outputBufferSize);
 
                 return originalRemaining; // Data accepted (buffered)
@@ -234,6 +238,9 @@ class TglogConnection {
                 copy.flip();
                 outputBuffer.offer(copy);
                 outputBufferSize += remaining;
+
+                // Register OP_WRITE to get notified when socket becomes writable
+                registerWriteInterest();
 
                 return originalRemaining; // All data accepted (some buffered)
             }
@@ -289,6 +296,9 @@ class TglogConnection {
                     }
                 }
 
+                // Register OP_WRITE to get notified when socket becomes writable
+                registerWriteInterest();
+
                 logger.debug("Buffered {} bytes (total buffered: {})", totalSize, outputBufferSize);
 
                 return totalSize; // All data accepted (buffered)
@@ -332,6 +342,9 @@ class TglogConnection {
                         outputBufferSize += bufRemaining;
                     }
                 }
+
+                // Register OP_WRITE to get notified when socket becomes writable
+                registerWriteInterest();
 
                 logger.debug("Partial write: sent {} bytes, buffering {} bytes", sent, remaining);
 
@@ -405,6 +418,11 @@ class TglogConnection {
         if (!outputBuffer.isEmpty() && state == State.CONNECTED) {
             try {
                 flushOutputBuffer();
+
+                // If all data sent, unregister OP_WRITE to avoid busy-wait
+                if (outputBuffer.isEmpty()) {
+                    unregisterWriteInterest();
+                }
             } catch (IOException e) {
                 logger.error("{}", "Failed to flush output buffer", e);
                 state = State.ERROR;
@@ -584,6 +602,30 @@ class TglogConnection {
 
     public long getLastActiveTime() {
         return lastActiveTime.get();
+    }
+
+    /**
+     * Register interest in OP_WRITE events (when we have data to send).
+     */
+    private void registerWriteInterest() {
+        if (selectionKey != null && selectionKey.isValid()) {
+            int ops = selectionKey.interestOps();
+            if ((ops & SelectionKey.OP_WRITE) == 0) {
+                selectionKey.interestOps(ops | SelectionKey.OP_WRITE);
+            }
+        }
+    }
+
+    /**
+     * Unregister interest in OP_WRITE events (when buffer is empty).
+     */
+    private void unregisterWriteInterest() {
+        if (selectionKey != null && selectionKey.isValid()) {
+            int ops = selectionKey.interestOps();
+            if ((ops & SelectionKey.OP_WRITE) != 0) {
+                selectionKey.interestOps(ops & ~SelectionKey.OP_WRITE);
+            }
+        }
     }
 
     public SelectionKey getSelectionKey() {

@@ -396,8 +396,13 @@ class TglogWorker implements Runnable {
                 // Process endpoint updates (lock-free queue)
                 processEndpointUpdates();
 
-                // Handle NIO events with short timeout (2ms like C version)
-                int readyKeys = selector.select(2);
+                // Handle NIO events with reasonable timeout
+                // Note: Unlike C version's event_base_dispatch which blocks until events,
+                // Java NIO requires explicit timeout. Using 10ms provides good balance:
+                // - Low CPU usage (max 100 wakeups/sec vs 500 with 2ms)
+                // - Good responsiveness (messages trigger immediate wakeup via selector.wakeup())
+                // - Batch timeout (10ms default) is still respected
+                int readyKeys = selector.select(10);
 
                 if (readyKeys > 0) {
                     processSelectionKeys();
