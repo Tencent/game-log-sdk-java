@@ -123,8 +123,8 @@ class TglogWorker implements Runnable {
     private static final long CONNECTION_REPLACE_CHECK_INTERVAL_MS = 20000; // 20 seconds
     private static final long EMERGENCY_SUPPLEMENT_INTERVAL_MS = 5000; // 5 seconds
     private static final long EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS = 2000; // 2 seconds
-    private static final int DEFAULT_CONN_CLOSE_DELAY_MS = 10000; // 10 seconds (normal replacement)
-    private static final int ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS = 10000; // 10 seconds (error with buffered data)
+    private static final int DEFAULT_CONN_CLOSE_DELAY_MS = 30000; // 10 seconds (normal replacement)
+    private static final int ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS = 30000; // 10 seconds (error with buffered data)
     private static final int ERROR_CONN_CLOSE_DELAY_NO_DATA_MS = 5000; // 5 seconds (error without buffered data)
 
     // Scheduled executor for delayed connection closing
@@ -1183,7 +1183,7 @@ class TglogWorker implements Runnable {
         int delayMs;
         if (isError) {
             if (conn.hasBufferedData()) {
-                delayMs = ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS; // 10 seconds
+                delayMs = ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS; // 30 seconds
                 logger.info("Worker {} scheduling error connection close with buffered data in {}ms: {}",
                         workerId, delayMs, conn.getEndpoint());
             } else {
@@ -1192,7 +1192,7 @@ class TglogWorker implements Runnable {
                         workerId, delayMs, conn.getEndpoint());
             }
         } else {
-            delayMs = DEFAULT_CONN_CLOSE_DELAY_MS; // 10 seconds (normal replacement)
+            delayMs = DEFAULT_CONN_CLOSE_DELAY_MS; // 30 seconds (normal replacement)
             logger.info("Worker {} scheduling normal connection close in {}ms: {}",
                     workerId, delayMs, conn.getEndpoint());
         }
