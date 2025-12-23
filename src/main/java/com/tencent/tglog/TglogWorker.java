@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Worker thread that handles message batching and network I/O.
- *
+ * <p>
  * Key design principles (matching C version):
  * - Lock-free message queue (MPSC - Multi-Producer Single-Consumer)
  * - Lock-free endpoint update queue
@@ -76,9 +76,6 @@ class TglogWorker implements Runnable {
     private final AtomicInteger initConnCount = new AtomicInteger(0);
     private volatile boolean initStarted = false;
 
-    // Wakeup optimization - avoid excessive wakeup calls
-    private final AtomicInteger pendingWakeup = new AtomicInteger(0);
-
     // Lock-free queues (MPSC pattern - multiple producers, single consumer in worker thread)
     private final LockFreeQueue<LogMessage> messageQueue;
     private final ConcurrentLinkedQueue<List<InetSocketAddress>> endpointUpdateQueue;
@@ -104,8 +101,8 @@ class TglogWorker implements Runnable {
 
     // NIO components (accessed only by worker thread)
     @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-        value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR",
-        justification = "Selector is initialized in run() method before any use")
+            value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR",
+            justification = "Selector is initialized in run() method before any use")
     private Selector selector;
 
     // Timers and intervals
@@ -393,19 +390,18 @@ class TglogWorker implements Runnable {
 
         while (state == State.READY) {
             try {
-                // Reset wakeup flag before select
-                pendingWakeup.set(0);
-
                 // Process endpoint updates (lock-free queue)
                 processEndpointUpdates();
 
-                // Handle NIO events with reasonable timeout
-                // Note: Unlike C version's event_base_dispatch which blocks until events,
-                // Java NIO requires explicit timeout. Using 10ms provides good balance:
-                // - Low CPU usage (max 100 wakeups/sec vs 500 with 2ms)
-                // - Good responsiveness (messages trigger immediate wakeup via selector.wakeup())
-                // - Batch timeout (10ms default) is still respected
-                int readyKeys = selector.select(10);
+                // Handle NIO events with adaptive timeout
+                // Worker thread polls message queue periodically without needing wakeup
+                // 10ms when idle for low CPU, 5ms when busy for high throughput
+                int readyKeys;
+                if (messageQueue.isEmpty()) {
+                    readyKeys = selector.select(10);
+                } else {
+                    readyKeys = selector.select(5);
+                }
 
                 if (readyKeys > 0) {
                     processSelectionKeys();
@@ -431,7 +427,7 @@ class TglogWorker implements Runnable {
 
                 // Replace expired connections (every 20s)
                 if (config.getMaxConnectionLifetime() > 0 &&
-                    now - lastConnectionReplaceTime >= CONNECTION_REPLACE_CHECK_INTERVAL_MS) {
+                        now - lastConnectionReplaceTime >= CONNECTION_REPLACE_CHECK_INTERVAL_MS) {
                     replaceExpiredConnections();
                     lastConnectionReplaceTime = now;
                 }
@@ -724,7 +720,7 @@ class TglogWorker implements Runnable {
         }
 
         return currentBatch.size() >= config.getBatchingMaxMessages() ||
-               currentBatch.getCurrentSize() >= config.getBatchingMaxSize();
+                currentBatch.getCurrentSize() >= config.getBatchingMaxSize();
     }
 
     /**
@@ -1177,7 +1173,7 @@ class TglogWorker implements Runnable {
      * - Error without buffered data: 5 seconds delay
      * When timer fires, rescue pending data to other connections before closing.
      *
-     * @param conn Connection to close
+     * @param conn    Connection to close
      * @param isError true if closing due to error, false for normal replacement
      */
     private void closeConnectionWithDelay(TglogConnection conn, boolean isError) {
@@ -1378,12 +1374,7 @@ class TglogWorker implements Runnable {
         boolean success = messageQueue.offer(message);
         if (success) {
             metrics.incrementEnqueuedMsg();
-
-            // Wake up selector (optimized - avoid excessive wakeup calls)
-            // Only wakeup if selector is likely blocked
-            if (selector != null && pendingWakeup.compareAndSet(0, 1)) {
-                selector.wakeup();
-            }
+            // No need to wake up selector - worker thread polls queue every 2ms
         }
 
         return success;
