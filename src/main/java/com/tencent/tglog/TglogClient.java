@@ -104,9 +104,13 @@ public class TglogClient implements AutoCloseable {
      */
     private void start() throws TglogException {
         if (running.compareAndSet(false, true)) {
+            boolean endpointManagerStarted = false;
+            List<TglogWorker> startedWorkers = new ArrayList<>();
+
             try {
                 // Start endpoint manager
                 endpointManager.start();
+                endpointManagerStarted = true;
 
                 // Register endpoint change listener
                 endpointManager.addChangeListener(this::onEndpointsChanged);
@@ -124,11 +128,33 @@ public class TglogClient implements AutoCloseable {
                 for (TglogWorker worker : workers) {
                     worker.setInitialEndpoints(endpoints);
                     worker.start();
+                    startedWorkers.add(worker);
                 }
 
                 logger.info("TglogClient started with {} endpoints", endpoints.size());
 
             } catch (Exception e) {
+                // Cleanup on failure
+                logger.error("Failed to start client, cleaning up resources", e);
+
+                // Stop all started workers
+                for (TglogWorker worker : startedWorkers) {
+                    try {
+                        worker.stop();
+                    } catch (Exception ex) {
+                        logger.error("Error stopping worker during cleanup", ex);
+                    }
+                }
+
+                // Stop endpoint manager if it was started
+                if (endpointManagerStarted) {
+                    try {
+                        endpointManager.stop();
+                    } catch (Exception ex) {
+                        logger.error("Error stopping endpoint manager during cleanup", ex);
+                    }
+                }
+
                 running.set(false);
                 throw new TglogException("Failed to start client", e);
             }
@@ -151,8 +177,9 @@ public class TglogClient implements AutoCloseable {
      */
     public CompletableFuture<Void> send(String logPayload, TglogCallback callback) throws TglogException {
         // Validate client state - synchronous validation errors only throw exception
-        if (closed.get()) {
-            throw new TglogException(TglogErrorCode.PRODUCER_CLOSED, "Client is closed");
+        // Check both closed and running to avoid race condition
+        if (closed.get() || !running.get()) {
+            throw new TglogException(TglogErrorCode.PRODUCER_CLOSED, "Client is closed or not running");
         }
 
         // Validate payload - synchronous validation errors only throw exception
@@ -228,9 +255,12 @@ public class TglogClient implements AutoCloseable {
 
     /**
      * Select a worker using round-robin.
+     * Uses bitwise AND to handle integer overflow safely.
      */
     private TglogWorker selectWorker() {
-        int index = Math.abs(roundRobinIndex.getAndIncrement() % workers.size());
+        // Use bitwise AND with Integer.MAX_VALUE to ensure positive value
+        // This handles Integer.MIN_VALUE overflow correctly (unlike Math.abs)
+        int index = (roundRobinIndex.getAndIncrement() & Integer.MAX_VALUE) % workers.size();
         return workers.get(index);
     }
 
