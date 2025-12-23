@@ -145,6 +145,9 @@ class TglogWorker implements Runnable {
         this.messageQueue = new LockFreeQueue<>(config.getMaxPendingMessages());
         this.endpointUpdateQueue = new ConcurrentLinkedQueue<>();
 
+        // Set queue capacity metric (actual capacity after rounding to power of 2)
+        metrics.setMsgQueueCapacity(messageQueue.capacity());
+
         // Initialize collections (accessed only by worker thread)
         this.currentEndpoints = new ArrayList<>();
         this.connections = new ArrayList<>();
@@ -1234,6 +1237,7 @@ class TglogWorker implements Runnable {
 
                 // Now close the connection
                 conn.close();
+                metrics.incrementClosedConn();
                 logger.info("Worker {} closed connection after delay: {}", workerId, conn.getEndpoint());
 
             } catch (Exception e) {
@@ -1358,6 +1362,7 @@ class TglogWorker implements Runnable {
             if (conn.getEndpoint().equals(endpoint)) {
                 connectingConns.remove(i);
                 conn.close();
+                metrics.incrementClosedConn();
             }
         }
     }
