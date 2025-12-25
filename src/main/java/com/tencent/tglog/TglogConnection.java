@@ -13,6 +13,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -30,6 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
 class TglogConnection {
 
     private static final Logger logger = LoggerFactory.getLogger(TglogConnection.class);
+    private static final Random random = new Random();
 
     enum State {
         DISCONNECTED,
@@ -52,6 +54,9 @@ class TglogConnection {
     private int retryCount = 0;
     private long lastRetryAttemptTime = 0;
     private final Backoff connectionBackoff = Backoff.CONNECTION_RETRY;
+
+    // Connection lifetime with jitter (to avoid all connections expiring at the same time)
+    private long lifetimeWithJitterMs = 0;
 
     // Output buffer for partial writes (similar to C's bufferevent)
     // Ensures data integrity by keeping unsent data bound to this connection
@@ -145,13 +150,16 @@ class TglogConnection {
                     lastActiveTime.set(System.currentTimeMillis());
                     retryCount = 0;
 
+                    // Calculate lifetime with jitter to avoid all connections expiring at the same time
+                    lifetimeWithJitterMs = calculateLifetimeWithJitter();
+
                     // Don't register OP_WRITE by default to avoid busy-wait
                     // OP_WRITE will be registered only when we have data to send
                     if (selectionKey != null) {
                         selectionKey.interestOps(0);  // No events by default
                     }
 
-                    logger.info("Connected to {}", endpoint);
+                    logger.info("Connected to {} (lifetime: {}ms)", endpoint, lifetimeWithJitterMs);
                     return true;
                 }
             } else {
@@ -160,6 +168,11 @@ class TglogConnection {
                 connectTime.set(System.currentTimeMillis());
                 lastActiveTime.set(System.currentTimeMillis());
                 retryCount = 0;
+
+                // Calculate lifetime with jitter to avoid all connections expiring at the same time
+                lifetimeWithJitterMs = calculateLifetimeWithJitter();
+
+                logger.info("Connected to {} (UDP, lifetime: {}ms)", endpoint, lifetimeWithJitterMs);
                 return true;
             }
         } catch (IOException e) {
@@ -528,7 +541,38 @@ class TglogConnection {
     }
 
     /**
-     * Check if connection is expired based on lifetime.
+     * Calculate connection lifetime with jitter.
+     * Following C version's logic: max_jitter is clamped to [20, 30] seconds,
+     * then a random jitter in [0, max_jitter) is added to the base lifetime.
+     * This prevents all connections from expiring at the same time.
+     *
+     * @return lifetime in milliseconds with jitter added
+     */
+    private long calculateLifetimeWithJitter() {
+        int maxLifetimeSec = config.getMaxConnectionLifetime();
+
+        // Calculate max jitter: max_lifetime / 10, clamped to [20, 30] seconds
+        int maxJitterSec = maxLifetimeSec / 10;
+        if (maxJitterSec < 20) {
+            maxJitterSec = 20;
+        } else if (maxJitterSec > 30) {
+            maxJitterSec = 30;
+        }
+
+        // Random jitter in [0, maxJitterSec) seconds
+        int jitterSec = random.nextInt(maxJitterSec);
+
+        // Total lifetime = base + jitter
+        long lifetimeMs = (maxLifetimeSec + jitterSec) * 1000L;
+
+        logger.debug("Calculated lifetime: base={}s, maxJitter={}s, jitter={}s, total={}ms",
+                maxLifetimeSec, maxJitterSec, jitterSec, lifetimeMs);
+
+        return lifetimeMs;
+    }
+
+    /**
+     * Check if connection is expired based on lifetime with jitter.
      *
      * @return true if connection should be closed
      */
@@ -536,8 +580,13 @@ class TglogConnection {
         if (state != State.CONNECTED) {
             return false;
         }
+        if (lifetimeWithJitterMs == 0) {
+            // Fallback: if jitter not calculated (shouldn't happen), use base lifetime
+            long lifetime = System.currentTimeMillis() - connectTime.get();
+            return lifetime > config.getMaxConnectionLifetime() * 1000L;
+        }
         long lifetime = System.currentTimeMillis() - connectTime.get();
-        return lifetime > config.getMaxConnectionLifetime() * 1000L;
+        return lifetime > lifetimeWithJitterMs;
     }
 
     /**
