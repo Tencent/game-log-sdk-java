@@ -12,7 +12,7 @@
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 

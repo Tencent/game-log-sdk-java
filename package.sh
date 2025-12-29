@@ -14,7 +14,7 @@ echo "步骤 1: 清理并编译项目..."
 mvn clean package -DskipTests
 
 # 检查编译结果
-if [ ! -f target/tglog-java-1.0.0-SNAPSHOT-jar-with-dependencies.jar ]; then
+if [ ! -f target/tglog-java-1.0.0-jar-with-dependencies.jar ]; then
     echo "错误: 打包失败，找不到 jar 文件"
     exit 1
 fi
@@ -29,8 +29,8 @@ mkdir -p ${RELEASE_DIR}/bin
 
 # 复制 jar 文件
 echo "步骤 3: 复制 jar 文件..."
-cp target/tglog-java-1.0.0-SNAPSHOT-jar-with-dependencies.jar ${RELEASE_DIR}/lib/tglog-java.jar
-cp target/tglog-java-1.0.0-SNAPSHOT.jar ${RELEASE_DIR}/lib/tglog-java-slim.jar
+cp target/tglog-java-1.0.0-jar-with-dependencies.jar ${RELEASE_DIR}/lib/tglog-java.jar
+cp target/tglog-java-1.0.0.jar ${RELEASE_DIR}/lib/tglog-java-slim.jar
 
 # 打包测试类到单独的 jar
 echo "步骤 4: 打包测试类和测试依赖..."
@@ -160,7 +160,7 @@ mvn install:install-file \
   -Dfile=lib/tglog-java-slim.jar \
   -DgroupId=com.tencent.tglog \
   -DartifactId=tglog-java \
-  -Dversion=1.0.0-SNAPSHOT \
+  -Dversion=1.0.0 \
   -Dpackaging=jar
 ```
 
