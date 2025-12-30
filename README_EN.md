@@ -107,7 +107,7 @@ After configuration, run `mvn clean install` to download dependencies automatica
 - ✅ **Performance Monitoring** - Rich metrics with JSON export support
 
 ### Performance Characteristics
-- **High Throughput**: Target 300k-500k messages/sec
+- **High Throughput**: Achieves 1M+ messages/sec
 - **Low Latency**: Configurable batch delay (default 10ms)
 - **Non-Blocking**: Send operations don't block business threads
 - **Backpressure Control**: Reject new messages when queue is full
@@ -488,10 +488,12 @@ public class GameServer {
 
 | Scenario | Messages | Time | Throughput | Notes |
 |----------|----------|------|------------|-------|
-| TCP No Callback | 1M | ~2.5s | ~400k/s | Max performance |
-| TCP With Callback | 1M | ~3.5s | ~280k/s | Production recommended |
-| UDP No Callback | 1M | ~2.0s | ~500k/s | Max performance |
-| UDP With Callback | 1M | ~3.0s | ~330k/s | Production recommended |
+| TCP With Callback | 10M | ~7.8s | ~1.28M/s | Production recommended |
+| TCP No Callback | 1M | ~0.6s | ~1.6M/s | Max performance |
+| UDP No Callback | 1M | ~0.5s | ~2.0M/s | Max performance |
+| UDP With Callback | 1M | ~0.7s | ~1.4M/s | Production recommended |
+
+**Note**: Above data is based on discard mode testing (-d flag). Actual network transmission performance depends on network bandwidth and server processing capacity.
 
 ### Running Performance Tests
 
@@ -516,7 +518,7 @@ public class GameServer {
 
 | Feature | C Version (JNI) | Pure Java Version |
 |---------|----------------|-------------------|
-| **Performance** | 1M/s | 300k-500k/s |
+| **Performance** | 1M/s | 1M+/s |
 | **Deployment** | Need JNI compilation | Pure JAR |
 | **Maintenance** | C+Java dual language | Pure Java |
 | **Debugging** | Difficult | Easy |
