@@ -350,10 +350,14 @@ TglogConfig config = TglogConfig.createTcp("logs.game.com", 8080)
     .setBatchingMaxMessages(10)         // Small batch
     .setBatchingMaxDelayMs(5);          // 5ms delay
 
-// UDP configuration
+// UDP configuration - Internet (avoid IP fragmentation)
 TglogConfig config = TglogConfig.createUdp("logs.game.com", 8080)
     .setWorkerNum(8)
-    .setBatchingMaxSize(1400);          // UDP should be less than MTU
+    .setBatchingMaxSize(1400);          // Less than MTU(1500) to avoid fragmentation
+
+// UDP configuration - LAN (use default)
+TglogConfig config = TglogConfig.createUdp("192.168.1.100", 8080)
+    .setWorkerNum(8);                   // Use default 32KB, no need to limit in LAN
 ```
 
 ## Performance Metrics

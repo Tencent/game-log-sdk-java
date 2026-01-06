@@ -350,10 +350,14 @@ TglogConfig config = TglogConfig.createTcp("logs.game.com", 8080)
     .setBatchingMaxMessages(10)         // 小批次
     .setBatchingMaxDelayMs(5);          // 5ms延迟
 
-// UDP配置
+// UDP配置 - 公网环境（避免IP分片）
 TglogConfig config = TglogConfig.createUdp("logs.game.com", 8080)
     .setWorkerNum(8)
-    .setBatchingMaxSize(1400);          // UDP建议小于MTU
+    .setBatchingMaxSize(1400);          // 小于MTU(1500)，避免分片
+
+// UDP配置 - 局域网环境（使用默认值）
+TglogConfig config = TglogConfig.createUdp("192.168.1.100", 8080)
+    .setWorkerNum(8);                   // 使用默认32KB，局域网无需限制
 ```
 
 ## 性能指标
