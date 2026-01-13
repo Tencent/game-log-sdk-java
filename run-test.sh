@@ -96,7 +96,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Build classpath with Maven dependencies
-CLASSPATH="target/classes:target/integration-test-classes"
+CLASSPATH="target/classes:target/test-classes:target/integration-test-classes"
 
 # Add all jars from target/lib to classpath
 if [ -d "target/lib" ]; then
