@@ -106,7 +106,6 @@ class TglogWorker implements Runnable {
     private Selector selector;
 
     // Timers and intervals
-    private long lastBatchTime = 0;
     private long lastEmergencySupplementTime = 0;
 
     // Retry management
@@ -383,7 +382,6 @@ class TglogWorker implements Runnable {
      * Main event loop.
      */
     private void runEventLoop() {
-        lastBatchTime = System.currentTimeMillis();
         long lastEndpointRecoverTime = System.currentTimeMillis();
         long lastConnectionReplaceTime = System.currentTimeMillis();
         lastEmergencySupplementTime = 0; // Allow first supplement immediately
@@ -692,23 +690,7 @@ class TglogWorker implements Runnable {
      * Check if batch can be sent (including timeout).
      */
     private boolean canSendBatch() {
-        if (currentBatch.isEmpty()) {
-            return false;
-        }
-
-        // Check message count
-        if (currentBatch.size() >= config.getBatchingMaxMessages()) {
-            return true;
-        }
-
-        // Check size
-        if (currentBatch.getCurrentSize() >= config.getBatchingMaxSize()) {
-            return true;
-        }
-
-        // Check timeout
-        long elapsed = System.currentTimeMillis() - lastBatchTime;
-        return elapsed >= config.getBatchingMaxDelayMs();
+        return currentBatch.shouldFlush();
     }
 
     /**
@@ -736,12 +718,7 @@ class TglogWorker implements Runnable {
      * Check if batch send has timed out.
      */
     private boolean isBatchSendTimeout() {
-        if (currentBatch.isEmpty() || config.getSendTimeout() <= 0) {
-            return false;
-        }
-
-        long elapsed = System.currentTimeMillis() - lastBatchTime;
-        return elapsed >= config.getSendTimeout();
+        return currentBatch.isSendTimeout(config.getSendTimeout());
     }
 
     /**
@@ -982,9 +959,8 @@ class TglogWorker implements Runnable {
             }
         }
 
-        // Clear batch
+        // Clear batch (this also resets createTime in BatchBuffer)
         currentBatch.clear();
-        lastBatchTime = System.currentTimeMillis();
 
         // Reset retry state
         currentBatchRetries = 0;
