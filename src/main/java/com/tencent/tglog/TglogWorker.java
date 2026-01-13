@@ -108,11 +108,6 @@ class TglogWorker implements Runnable {
     // Timers and intervals
     private long lastEmergencySupplementTime = 0;
 
-    // Retry management
-    private int currentBatchRetries = 0;
-    private long batchRetryStartTime = 0;
-    private long batchRetryDeadline = 0;
-
     // Constants
     private static final int MSG_PER_RUN = 3000;
     private static final long ENDPOINT_RECOVER_INTERVAL_MS = 30000; // 30 seconds
@@ -620,12 +615,21 @@ class TglogWorker implements Runnable {
         while (processed < MSG_PER_RUN && state == State.READY) {
             // Check if we're retrying
             if (isRetrying()) {
-                if (!isRetryingTimeout()) {
-                    break; // Still in retry backoff
+                // Check if retry has timed out (exceeded total backoff time)
+                if (isRetryingTimeout()) {
+                    logger.warn("Worker {} batch retry timeout", workerId);
+                    failCurrentBatch(TglogErrorCode.SEND_TIMEOUT);
+                } else if (currentBatch.shouldRetryNow(Backoff.BATCH_RETRY)) {
+                    // Time to retry - attempt to send the batch again
+                    logger.debug("Worker {} attempting retry {}/{}",
+                            workerId, currentBatch.getRetryCount(), config.getMaxRetries());
+                    if (!sendBatch(true)) {
+                        break; // Still retrying (will check again in next iteration)
+                    }
+                } else {
+                    // Still in backoff period, skip processing new messages
+                    break;
                 }
-                // Retry timeout - fail the batch
-                logger.warn("Worker {} batch retry timeout", workerId);
-                failCurrentBatch(TglogErrorCode.SEND_TIMEOUT);
             }
 
             // Check batch send timeout
@@ -725,18 +729,21 @@ class TglogWorker implements Runnable {
      * Check if currently retrying.
      */
     private boolean isRetrying() {
-        return batchRetryStartTime > 0;
+        return currentBatch.isRetrying();
     }
 
     /**
      * Check if retry has timed out.
+     * Uses total backoff time for all retries as the deadline.
      */
     private boolean isRetryingTimeout() {
         if (!isRetrying()) {
             return false;
         }
 
-        return System.currentTimeMillis() >= batchRetryDeadline;
+        // Calculate total backoff time for max retries
+        long totalBackoff = Backoff.BATCH_RETRY.getNextInterval(config.getMaxRetries() + 1);
+        return currentBatch.isRetryTimeout((int) totalBackoff);
     }
 
     /**
@@ -904,28 +911,21 @@ class TglogWorker implements Runnable {
      */
     private boolean retryBatch() {
         // Check max retries
-        if (currentBatchRetries >= config.getMaxRetries()) {
+        if (currentBatch.getRetryCount() >= config.getMaxRetries()) {
             logger.warn("Worker {} max retries exceeded", workerId);
             completeBatch(TglogErrorCode.SEND_TIMEOUT);
             return true;
         }
 
-        // Start retry
-        currentBatchRetries++;
+        // Mark batch for retry (increments retry count and sets retry timestamps)
+        currentBatch.markForRetry();
         metrics.incrementRetryMsg();
 
-        // Calculate backoff
-        long backoffMs = Backoff.BATCH_RETRY.getNextInterval(currentBatchRetries);
-
-        // Set retry deadline on first retry
-        if (currentBatchRetries == 1) {
-            batchRetryStartTime = System.currentTimeMillis();
-            long totalBackoff = Backoff.BATCH_RETRY.getNextInterval(config.getMaxRetries() + 1);
-            batchRetryDeadline = batchRetryStartTime + totalBackoff;
-        }
+        // Calculate backoff for logging
+        long backoffMs = Backoff.BATCH_RETRY.getNextInterval(currentBatch.getRetryCount());
 
         logger.debug("Worker {} retrying batch in {}ms (attempt {}/{})",
-                workerId, backoffMs, currentBatchRetries, config.getMaxRetries());
+                workerId, backoffMs, currentBatch.getRetryCount(), config.getMaxRetries());
 
         return false; // Still retrying
     }
@@ -959,13 +959,8 @@ class TglogWorker implements Runnable {
             }
         }
 
-        // Clear batch (this also resets createTime in BatchBuffer)
+        // Clear batch (this also resets createTime and retry state in BatchBuffer)
         currentBatch.clear();
-
-        // Reset retry state
-        currentBatchRetries = 0;
-        batchRetryStartTime = 0;
-        batchRetryDeadline = 0;
     }
 
     /**
