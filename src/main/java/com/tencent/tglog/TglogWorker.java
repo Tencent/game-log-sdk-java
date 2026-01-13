@@ -406,9 +406,6 @@ class TglogWorker implements Runnable {
                 // Process messages from queue (up to MSG_PER_RUN)
                 processMessages();
 
-                // Check batch timeout
-                checkBatchTimeout();
-
                 // Periodic tasks
                 long now = System.currentTimeMillis();
 
@@ -710,15 +707,6 @@ class TglogWorker implements Runnable {
     }
 
     /**
-     * Check batch timeout.
-     */
-    private void checkBatchTimeout() {
-        if (canSendBatch()) {
-            sendBatch(true);
-        }
-    }
-
-    /**
      * Check if batch send has timed out.
      */
     private boolean isBatchSendTimeout() {
@@ -741,8 +729,8 @@ class TglogWorker implements Runnable {
             return false;
         }
 
-        // Calculate total backoff time for max retries
-        long totalBackoff = Backoff.BATCH_RETRY.getNextInterval(config.getMaxRetries() + 1);
+        // Calculate total backoff time for all retries (sum of all retry intervals)
+        long totalBackoff = Backoff.BATCH_RETRY.getTotalBackoffTime(config.getMaxRetries());
         return currentBatch.isRetryTimeout((int) totalBackoff);
     }
 
@@ -924,7 +912,7 @@ class TglogWorker implements Runnable {
         // Calculate backoff for logging
         long backoffMs = Backoff.BATCH_RETRY.getNextInterval(currentBatch.getRetryCount());
 
-        logger.debug("Worker {} retrying batch in {}ms (attempt {}/{})",
+        logger.info("Worker {} retrying batch in {}ms (attempt {}/{})",
                 workerId, backoffMs, currentBatch.getRetryCount(), config.getMaxRetries());
 
         return false; // Still retrying

@@ -75,6 +75,25 @@ class Backoff {
         return elapsed >= requiredInterval;
     }
 
+    /**
+     * Calculate total backoff time for all retries up to maxRetries.
+     * This is the sum of all retry intervals: interval(1) + interval(2) + ... + interval(maxRetries)
+     *
+     * @param maxRetries Maximum number of retries
+     * @return Total time in milliseconds for all retries
+     */
+    public long getTotalBackoffTime(int maxRetries) {
+        if (maxRetries <= 0) {
+            return 0;
+        }
+
+        long total = 0;
+        for (int i = 1; i <= maxRetries; i++) {
+            total += getNextInterval(i);
+        }
+        return total;
+    }
+
     public long getInitialIntervalMs() {
         return initialIntervalMs;
     }
