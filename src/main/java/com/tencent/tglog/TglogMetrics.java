@@ -109,16 +109,19 @@ public class TglogMetrics {
         this.openedConnCount = Counter.build()
                 .name("tglog_opened_connections_total")
                 .help("Total number of connections opened")
+                .labelNames("worker_id")
                 .register(registry);
 
         this.closedConnCount = Counter.build()
                 .name("tglog_closed_connections_total")
                 .help("Total number of connections closed")
+                .labelNames("worker_id")
                 .register(registry);
 
         this.errorConnCount = Counter.build()
                 .name("tglog_error_connections_total")
                 .help("Total number of connection errors")
+                .labelNames("worker_id")
                 .register(registry);
 
         this.addEndpointCount = Counter.build()
@@ -137,14 +140,17 @@ public class TglogMetrics {
                 .register(registry);
 
         // Initialize Gauge metrics
+        // Queue size and connection count have worker_id label for per-worker monitoring
         this.msgQueueSize = Gauge.build()
                 .name("tglog_message_queue_size")
                 .help("Current size of the message queue")
+                .labelNames("worker_id")
                 .register(registry);
 
         this.msgQueueCapacity = Gauge.build()
                 .name("tglog_message_queue_capacity")
                 .help("Capacity of the message queue")
+                .labelNames("worker_id")
                 .register(registry);
 
         this.endpointCount = Gauge.build()
@@ -155,6 +161,7 @@ public class TglogMetrics {
         this.activeConnCount = Gauge.build()
                 .name("tglog_active_connections")
                 .help("Current number of active connections")
+                .labelNames("worker_id")
                 .register(registry);
     }
 
@@ -192,16 +199,16 @@ public class TglogMetrics {
         droppedMsgCount.inc();
     }
 
-    public void incrementOpenedConn() {
-        openedConnCount.inc();
+    public void incrementOpenedConn(int workerId) {
+        openedConnCount.labels(String.valueOf(workerId)).inc();
     }
 
-    public void incrementClosedConn() {
-        closedConnCount.inc();
+    public void incrementClosedConn(int workerId) {
+        closedConnCount.labels(String.valueOf(workerId)).inc();
     }
 
-    public void incrementErrorConn() {
-        errorConnCount.inc();
+    public void incrementErrorConn(int workerId) {
+        errorConnCount.labels(String.valueOf(workerId)).inc();
     }
 
     public void incrementAddEndpoint() {
@@ -218,20 +225,20 @@ public class TglogMetrics {
 
     // ========== Gauge Updates ==========
 
-    public void setMsgQueueSize(long size) {
-        msgQueueSize.set(size);
+    public void setMsgQueueSize(int workerId, long size) {
+        msgQueueSize.labels(String.valueOf(workerId)).set(size);
     }
 
-    public void setMsgQueueCapacity(long capacity) {
-        msgQueueCapacity.set(capacity);
+    public void setMsgQueueCapacity(int workerId, long capacity) {
+        msgQueueCapacity.labels(String.valueOf(workerId)).set(capacity);
     }
 
     public void setEndpointCount(long count) {
         endpointCount.set(count);
     }
 
-    public void setActiveConnCount(long count) {
-        activeConnCount.set(count);
+    public void setActiveConnCount(int workerId, long count) {
+        activeConnCount.labels(String.valueOf(workerId)).set(count);
     }
 
     // ========== Getters ==========
@@ -269,15 +276,30 @@ public class TglogMetrics {
     }
 
     public long getOpenedConnCount() {
-        return (long) openedConnCount.get();
+        // Sum across all worker_id labels (only _total samples, not _created)
+        return (long) openedConnCount.collect().stream()
+                .flatMap(mf -> mf.samples.stream())
+                .filter(s -> s.name.endsWith("_total"))
+                .mapToDouble(s -> s.value)
+                .sum();
     }
 
     public long getClosedConnCount() {
-        return (long) closedConnCount.get();
+        // Sum across all worker_id labels (only _total samples, not _created)
+        return (long) closedConnCount.collect().stream()
+                .flatMap(mf -> mf.samples.stream())
+                .filter(s -> s.name.endsWith("_total"))
+                .mapToDouble(s -> s.value)
+                .sum();
     }
 
     public long getErrorConnCount() {
-        return (long) errorConnCount.get();
+        // Sum across all worker_id labels (only _total samples, not _created)
+        return (long) errorConnCount.collect().stream()
+                .flatMap(mf -> mf.samples.stream())
+                .filter(s -> s.name.endsWith("_total"))
+                .mapToDouble(s -> s.value)
+                .sum();
     }
 
     public long getAddEndpointCount() {
@@ -293,11 +315,19 @@ public class TglogMetrics {
     }
 
     public long getMsgQueueSize() {
-        return (long) msgQueueSize.get();
+        // Sum across all worker_id labels
+        return (long) msgQueueSize.collect().stream()
+                .flatMap(mf -> mf.samples.stream())
+                .mapToDouble(s -> s.value)
+                .sum();
     }
 
     public long getMsgQueueCapacity() {
-        return (long) msgQueueCapacity.get();
+        // Sum across all worker_id labels
+        return (long) msgQueueCapacity.collect().stream()
+                .flatMap(mf -> mf.samples.stream())
+                .mapToDouble(s -> s.value)
+                .sum();
     }
 
     public long getEndpointCount() {
@@ -305,7 +335,11 @@ public class TglogMetrics {
     }
 
     public long getActiveConnCount() {
-        return (long) activeConnCount.get();
+        // Sum across all worker_id labels
+        return (long) activeConnCount.collect().stream()
+                .flatMap(mf -> mf.samples.stream())
+                .mapToDouble(s -> s.value)
+                .sum();
     }
 
     // ========== Derived Metrics ==========
@@ -372,7 +406,8 @@ public class TglogMetrics {
         sb.append("    \"closed_conn_count\": ").append(getClosedConnCount()).append(",\n");
         sb.append("    \"error_conn_count\": ").append(getErrorConnCount()).append(",\n");
         sb.append("    \"add_endpoint_count\": ").append(getAddEndpointCount()).append(",\n");
-        sb.append("    \"remove_endpoint_count\": ").append(getRemoveEndpointCount()).append("\n");
+        sb.append("    \"remove_endpoint_count\": ").append(getRemoveEndpointCount()).append(",\n");
+        sb.append("    \"rescued_msg_bytes\": ").append(getRescuedMsgBytes()).append("\n");
         sb.append("  },\n");
         sb.append("  \"gauges\": {\n");
         sb.append("    \"msg_queue_size\": ").append(getMsgQueueSize()).append(",\n");

@@ -116,6 +116,9 @@ class BatchBuffer {
      * For TCP: creates multiple buffers for gathering write
      * For UDP: creates single buffer with all messages
      *
+     * Buffers are cached after first preparation and reused on retry
+     * to avoid repeated allocation and string-to-bytes conversion.
+     *
      * @return Array of ByteBuffers ready to send
      */
     public ByteBuffer[] prepareForSend() {
@@ -123,6 +126,15 @@ class BatchBuffer {
             return new ByteBuffer[0];
         }
 
+        // If buffers already prepared (for retry), rewind and reuse them
+        if (sendBuffers != null && sendBufferCount > 0) {
+            for (int i = 0; i < sendBufferCount; i++) {
+                sendBuffers[i].rewind();
+            }
+            return sendBuffers;
+        }
+
+        // First time preparation
         if (config.getProtocol() == TglogConfig.Protocol.TCP) {
             return prepareForTcp();
         } else {

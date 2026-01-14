@@ -114,6 +114,7 @@ class TglogWorker implements Runnable {
     private static final long CONNECTION_REPLACE_CHECK_INTERVAL_MS = 20000; // 20 seconds
     private static final long EMERGENCY_SUPPLEMENT_INTERVAL_MS = 5000; // 5 seconds
     private static final long EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS = 2000; // 2 seconds
+    private static final long METRICS_UPDATE_INTERVAL_MS = 5000; // 5 seconds
     private static final int DEFAULT_CONN_CLOSE_DELAY_MS = 30000; // 10 seconds (normal replacement)
     private static final int ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS = 30000; // 10 seconds (error with buffered data)
     private static final int ERROR_CONN_CLOSE_DELAY_NO_DATA_MS = 5000; // 5 seconds (error without buffered data)
@@ -137,7 +138,7 @@ class TglogWorker implements Runnable {
         this.endpointUpdateQueue = new ConcurrentLinkedQueue<>();
 
         // Set queue capacity metric (actual capacity after rounding to power of 2)
-        metrics.setMsgQueueCapacity(messageQueue.capacity());
+        metrics.setMsgQueueCapacity(workerId, messageQueue.capacity());
 
         // Initialize collections (accessed only by worker thread)
         this.currentEndpoints = new ArrayList<>();
@@ -379,6 +380,7 @@ class TglogWorker implements Runnable {
     private void runEventLoop() {
         long lastEndpointRecoverTime = System.currentTimeMillis();
         long lastConnectionReplaceTime = System.currentTimeMillis();
+        long lastMetricsUpdateTime = System.currentTimeMillis();
         lastEmergencySupplementTime = 0; // Allow first supplement immediately
 
         while (state == State.READY) {
@@ -426,6 +428,13 @@ class TglogWorker implements Runnable {
                 if (now - lastEmergencySupplementTime >= EMERGENCY_SUPPLEMENT_INTERVAL_MS) {
                     emergencySupplementCheck();
                     lastEmergencySupplementTime = now;
+                }
+
+                // Update metrics (every 5s)
+                if (now - lastMetricsUpdateTime >= METRICS_UPDATE_INTERVAL_MS) {
+                    metrics.setMsgQueueSize(workerId, messageQueue.size());
+                    metrics.setActiveConnCount(workerId, connections.size());
+                    lastMetricsUpdateTime = now;
                 }
 
             } catch (Exception e) {
@@ -521,7 +530,7 @@ class TglogWorker implements Runnable {
      * Check connecting connections for completion.
      */
     private void checkConnectingConnections() {
-        logger.debug("Worker {} checking  connecting connections", workerId, connectingConns.size());
+        logger.debug("Worker {} checking {} connecting connections", workerId, connectingConns.size());
 
         for (int i = connectingConns.size() - 1; i >= 0; i--) {
             TglogConnection conn = connectingConns.get(i);
@@ -535,7 +544,7 @@ class TglogWorker implements Runnable {
                 connections.add(conn);
 
                 // Update metrics
-                metrics.incrementOpenedConn();
+                metrics.incrementOpenedConn(workerId);
 
                 // Notify if this is an init connection
                 if (state == State.INIT) {
@@ -597,7 +606,7 @@ class TglogWorker implements Runnable {
         closeConnectionWithDelay(conn, true);
 
         // Update metrics
-        metrics.incrementClosedConn();
+        metrics.incrementErrorConn(workerId);
 
         // Try to supplement
         supplementConnection();
@@ -623,6 +632,8 @@ class TglogWorker implements Runnable {
                     if (!sendBatch(true)) {
                         break; // Still retrying (will check again in next iteration)
                     }
+
+                    // Retry succeed, continue to process new messages
                 } else {
                     // Still in backoff period, skip processing new messages
                     break;
@@ -1177,6 +1188,7 @@ class TglogWorker implements Runnable {
                                 for (ByteBuffer buf : pending) {
                                     rescuedBytes += buf.remaining();
                                 }
+                                metrics.addRescuedMsgBytes(rescuedBytes);
                                 logger.info("Worker {} rescued {} bytes from closing connection {}",
                                         workerId, rescuedBytes, conn.getEndpoint());
                             } else {
@@ -1192,7 +1204,7 @@ class TglogWorker implements Runnable {
 
                 // Now close the connection
                 conn.close();
-                metrics.incrementClosedConn();
+                metrics.incrementClosedConn(workerId);
                 logger.info("Worker {} closed connection after delay: {}", workerId, conn.getEndpoint());
 
             } catch (Exception e) {
@@ -1317,7 +1329,7 @@ class TglogWorker implements Runnable {
             if (conn.getEndpoint().equals(endpoint)) {
                 connectingConns.remove(i);
                 conn.close();
-                metrics.incrementClosedConn();
+                metrics.incrementClosedConn(workerId);
             }
         }
     }
@@ -1347,11 +1359,18 @@ class TglogWorker implements Runnable {
     }
 
     /**
+     * Get active connection count.
+     */
+    public int getActiveConnectionCount() {
+        return connections.size();
+    }
+
+    /**
      * Check if worker has pending work (messages in queue, batch, or connection buffers).
      */
     public boolean hasPendingWork() {
         // Check message queue
-        if (messageQueue.size() > 0) {
+        if (!messageQueue.isEmpty()) {
             return true;
         }
 
