@@ -5,6 +5,32 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-01-14
+
+### 问题修复
+- **修复批次重试逻辑缺陷**：
+  - 移除 `processMessages()` 中重复的批次超时检查，该检查会破坏重试退避机制
+  - 重构批次重试逻辑，将重试状态和时间戳管理封装到 `BatchBuffer` 中
+  - 修复重试退避计算错误，现在正确使用指数退避策略
+- **修复指标统计问题**：
+  - 修复 `TglogMetrics.toJson()` 缺少 `rescued_msg_bytes` 字段
+  - 修复 `handleConnectionError()` 中重复调用 `incrementClosedConn()` 导致的重复计数
+  - 连接关闭指标现在只在实际关闭时计数一次
+- **修复数据救援问题**：
+  - 修复 `writePendingData()` 后未注册 `OP_WRITE` 导致救援数据无法及时发送的问题
+  - 现在救援数据后会立即注册写事件，确保数据尽快发送
+
+### 性能优化
+- **优化批次重试性能**：
+  - `BatchBuffer.prepareForSend()` 现在会缓存已准备的 ByteBuffer
+  - 重试时直接重用缓存的 ByteBuffer，避免重复的内存分配和字符串转换
+  - 在高重试率场景下显著降低 CPU 和内存开销
+
+### 代码改进
+- 将批次时间管理逻辑（`createTime`、重试时间戳）封装到 `BatchBuffer` 中
+- 添加 `BatchBuffer.isSendTimeout()` 和 `isRetryTimeout()` 方法，提高代码可读性
+- 改进日志输出，添加时间戳以便调试重试和超时问题
+
 ## [1.0.0] - 2025-12-31
 
 ### 新增功能
@@ -19,6 +45,7 @@
 - **UDP 批量发送** - UDP 支持单包批量发送模式
 - **自动重连** - 连接断开自动重连，指数退避策略
 - **DNS 解析** - 定时 DNS 解析，支持负载均衡
+- 
 - **连接生命周期管理** - 可配置连接最大存活时间，自动替换过期连接
 - **紧急连接补充** - 当连接不足时自动补充
 - **端点恢复** - 不可用端点自动恢复，带退避策略
@@ -143,4 +170,5 @@
 
 ---
 
+[1.0.1]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.1
 [1.0.0]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.0
