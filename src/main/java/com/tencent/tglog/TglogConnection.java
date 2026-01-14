@@ -503,6 +503,9 @@ class TglogConnection {
             }
         }
 
+        // Register OP_WRITE to flush the rescued data
+        registerWriteInterest();
+
         logger.info("Rescued {} bytes of pending data from another connection", totalSize);
 
         return true;
