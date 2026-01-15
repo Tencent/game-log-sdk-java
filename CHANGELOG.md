@@ -5,13 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.1] - 2026-01-14
+## [1.0.1] - 2026-01-15
 
 ### 问题修复
 - **修复批次重试逻辑缺陷**：
   - 移除 `processMessages()` 中重复的批次超时检查，该检查会破坏重试退避机制
   - 重构批次重试逻辑，将重试状态和时间戳管理封装到 `BatchBuffer` 中
   - 修复重试退避计算错误，现在正确使用指数退避策略
+  - 重试期间也检查是否发送超时
 - **修复指标统计问题**：
   - 修复 `TglogMetrics.toJson()` 缺少 `rescued_msg_bytes` 字段
   - 修复 `handleConnectionError()` 中重复调用 `incrementClosedConn()` 导致的重复计数
