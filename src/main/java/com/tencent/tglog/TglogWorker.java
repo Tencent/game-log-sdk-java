@@ -625,6 +625,7 @@ class TglogWorker implements Runnable {
                 if (isRetryingTimeout()) {
                     logger.warn("Worker {} batch retry timeout", workerId);
                     failCurrentBatch(TglogErrorCode.SEND_TIMEOUT);
+                    // Continue to process new messages
                 } else if (currentBatch.shouldRetryNow(Backoff.BATCH_RETRY)) {
                     // Time to retry - attempt to send the batch again
                     logger.debug("Worker {} attempting retry {}/{}",
@@ -634,6 +635,10 @@ class TglogWorker implements Runnable {
                     }
 
                     // Retry succeed, continue to process new messages
+                } else if (isBatchSendTimeout()) {
+                    logger.warn("Worker {} batch reach send timeout while retrying", workerId);
+                    failCurrentBatch(TglogErrorCode.SEND_TIMEOUT);
+                    // Continue to process new messages
                 } else {
                     // Still in backoff period, skip processing new messages
                     break;
