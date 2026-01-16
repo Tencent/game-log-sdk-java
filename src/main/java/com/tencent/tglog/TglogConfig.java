@@ -1,5 +1,7 @@
 package com.tencent.tglog;
 
+import io.prometheus.client.CollectorRegistry;
+
 /**
  * Configuration for TGLog client.
  *
@@ -60,6 +62,9 @@ public class TglogConfig {
 
     // ========== Debug Configuration ==========
     private boolean debugEnabled = false;
+
+    // ========== Metrics Configuration ==========
+    private CollectorRegistry collectorRegistry = null;  // null means use defaultRegistry
 
     /**
      * Create a new configuration with required parameters.
@@ -270,6 +275,35 @@ public class TglogConfig {
 
     public TglogConfig setDebugEnabled(boolean debugEnabled) {
         this.debugEnabled = debugEnabled;
+        return this;
+    }
+
+    /**
+     * Get the Prometheus CollectorRegistry.
+     * Returns null if using default registry.
+     *
+     * @return CollectorRegistry or null for default
+     */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification = "Registry must be shared for Prometheus integration")
+    public CollectorRegistry getCollectorRegistry() {
+        return collectorRegistry;
+    }
+
+    /**
+     * Set a custom Prometheus CollectorRegistry.
+     * If null, the default registry will be used.
+     * This is useful for isolating metrics in tests or multi-tenant scenarios.
+     *
+     * @param collectorRegistry Custom registry, or null for default
+     * @return this config for fluent API
+     */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification = "Registry must be shared for Prometheus integration")
+    public TglogConfig setCollectorRegistry(CollectorRegistry collectorRegistry) {
+        this.collectorRegistry = collectorRegistry;
         return this;
     }
 

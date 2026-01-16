@@ -66,7 +66,13 @@ public class TglogClient implements AutoCloseable {
         }
 
         this.config = config;
-        this.metrics = new TglogMetrics();
+
+        // Use custom registry if provided, otherwise use default
+        io.prometheus.client.CollectorRegistry registry = config.getCollectorRegistry();
+        if (registry == null) {
+            registry = io.prometheus.client.CollectorRegistry.defaultRegistry;
+        }
+        this.metrics = new TglogMetrics(registry);
 
         // Auto-adjust batching max size based on protocol limits
         int maxRequestSize = config.getMaxRequestSize();
