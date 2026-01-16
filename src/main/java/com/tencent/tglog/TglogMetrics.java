@@ -387,37 +387,64 @@ public class TglogMetrics {
 
     /**
      * Export metrics as JSON string.
+     * Reads all metrics first to minimize inconsistency in concurrent scenarios.
      *
      * @return JSON representation of metrics
      */
     public String toJson() {
+        // Read all metrics first to get a more consistent snapshot
+        long requestMsgCount = getRequestMsgCount();
+        long enqueuedMsgCount = getEnqueuedMsgCount();
+        long dequeuedMsgCount = getDequeuedMsgCount();
+        long succeededMsgCount = getSucceededMsgCount();
+        long failedMsgCount = getFailedMsgCount();
+        long timeoutMsgCount = getTimeoutMsgCount();
+        long retryMsgCount = getRetryMsgCount();
+        long droppedMsgCount = getDroppedMsgCount();
+        long openedConnCount = getOpenedConnCount();
+        long closedConnCount = getClosedConnCount();
+        long errorConnCount = getErrorConnCount();
+        long addEndpointCount = getAddEndpointCount();
+        long removeEndpointCount = getRemoveEndpointCount();
+        long rescuedMsgBytes = getRescuedMsgBytes();
+        long msgQueueSize = getMsgQueueSize();
+        long msgQueueCapacity = getMsgQueueCapacity();
+        long endpointCount = getEndpointCount();
+        long activeConnCount = getActiveConnCount();
+
+        // Calculate derived metrics
+        long total = succeededMsgCount + failedMsgCount;
+        double successRate = total == 0 ? 0.0 : (double) succeededMsgCount / total;
+        double queueUtilization = msgQueueCapacity == 0 ? 0.0 : (double) msgQueueSize / msgQueueCapacity;
+
+        // Build JSON string
         StringBuilder sb = new StringBuilder();
         sb.append("{\n");
         sb.append("  \"counters\": {\n");
-        sb.append("    \"request_msg_count\": ").append(getRequestMsgCount()).append(",\n");
-        sb.append("    \"enqueued_msg_count\": ").append(getEnqueuedMsgCount()).append(",\n");
-        sb.append("    \"dequeued_msg_count\": ").append(getDequeuedMsgCount()).append(",\n");
-        sb.append("    \"succeeded_msg_count\": ").append(getSucceededMsgCount()).append(",\n");
-        sb.append("    \"failed_msg_count\": ").append(getFailedMsgCount()).append(",\n");
-        sb.append("    \"timeout_msg_count\": ").append(getTimeoutMsgCount()).append(",\n");
-        sb.append("    \"retry_msg_count\": ").append(getRetryMsgCount()).append(",\n");
-        sb.append("    \"dropped_msg_count\": ").append(getDroppedMsgCount()).append(",\n");
-        sb.append("    \"opened_conn_count\": ").append(getOpenedConnCount()).append(",\n");
-        sb.append("    \"closed_conn_count\": ").append(getClosedConnCount()).append(",\n");
-        sb.append("    \"error_conn_count\": ").append(getErrorConnCount()).append(",\n");
-        sb.append("    \"add_endpoint_count\": ").append(getAddEndpointCount()).append(",\n");
-        sb.append("    \"remove_endpoint_count\": ").append(getRemoveEndpointCount()).append(",\n");
-        sb.append("    \"rescued_msg_bytes\": ").append(getRescuedMsgBytes()).append("\n");
+        sb.append("    \"request_msg_count\": ").append(requestMsgCount).append(",\n");
+        sb.append("    \"enqueued_msg_count\": ").append(enqueuedMsgCount).append(",\n");
+        sb.append("    \"dequeued_msg_count\": ").append(dequeuedMsgCount).append(",\n");
+        sb.append("    \"succeeded_msg_count\": ").append(succeededMsgCount).append(",\n");
+        sb.append("    \"failed_msg_count\": ").append(failedMsgCount).append(",\n");
+        sb.append("    \"timeout_msg_count\": ").append(timeoutMsgCount).append(",\n");
+        sb.append("    \"retry_msg_count\": ").append(retryMsgCount).append(",\n");
+        sb.append("    \"dropped_msg_count\": ").append(droppedMsgCount).append(",\n");
+        sb.append("    \"opened_conn_count\": ").append(openedConnCount).append(",\n");
+        sb.append("    \"closed_conn_count\": ").append(closedConnCount).append(",\n");
+        sb.append("    \"error_conn_count\": ").append(errorConnCount).append(",\n");
+        sb.append("    \"add_endpoint_count\": ").append(addEndpointCount).append(",\n");
+        sb.append("    \"remove_endpoint_count\": ").append(removeEndpointCount).append(",\n");
+        sb.append("    \"rescued_msg_bytes\": ").append(rescuedMsgBytes).append("\n");
         sb.append("  },\n");
         sb.append("  \"gauges\": {\n");
-        sb.append("    \"msg_queue_size\": ").append(getMsgQueueSize()).append(",\n");
-        sb.append("    \"msg_queue_capacity\": ").append(getMsgQueueCapacity()).append(",\n");
-        sb.append("    \"endpoint_count\": ").append(getEndpointCount()).append(",\n");
-        sb.append("    \"active_conn_count\": ").append(getActiveConnCount()).append("\n");
+        sb.append("    \"msg_queue_size\": ").append(msgQueueSize).append(",\n");
+        sb.append("    \"msg_queue_capacity\": ").append(msgQueueCapacity).append(",\n");
+        sb.append("    \"endpoint_count\": ").append(endpointCount).append(",\n");
+        sb.append("    \"active_conn_count\": ").append(activeConnCount).append("\n");
         sb.append("  },\n");
         sb.append("  \"derived\": {\n");
-        sb.append("    \"success_rate\": ").append(String.format("%.4f", getSuccessRate())).append(",\n");
-        sb.append("    \"queue_utilization\": ").append(String.format("%.4f", getQueueUtilization())).append("\n");
+        sb.append("    \"success_rate\": ").append(String.format("%.4f", successRate)).append(",\n");
+        sb.append("    \"queue_utilization\": ").append(String.format("%.4f", queueUtilization)).append("\n");
         sb.append("  }\n");
         sb.append("}");
         return sb.toString();
@@ -425,45 +452,72 @@ public class TglogMetrics {
 
     /**
      * Get human-readable metrics string with all metrics.
+     * Reads all metrics first to minimize inconsistency in concurrent scenarios.
      *
      * @return Formatted metrics string
      */
     @Override
     public String toString() {
+        // Read all metrics first to get a more consistent snapshot
+        long requestMsgCount = getRequestMsgCount();
+        long enqueuedMsgCount = getEnqueuedMsgCount();
+        long dequeuedMsgCount = getDequeuedMsgCount();
+        long succeededMsgCount = getSucceededMsgCount();
+        long failedMsgCount = getFailedMsgCount();
+        long timeoutMsgCount = getTimeoutMsgCount();
+        long retryMsgCount = getRetryMsgCount();
+        long droppedMsgCount = getDroppedMsgCount();
+        long openedConnCount = getOpenedConnCount();
+        long closedConnCount = getClosedConnCount();
+        long errorConnCount = getErrorConnCount();
+        long addEndpointCount = getAddEndpointCount();
+        long removeEndpointCount = getRemoveEndpointCount();
+        long rescuedMsgBytes = getRescuedMsgBytes();
+        long msgQueueSize = getMsgQueueSize();
+        long msgQueueCapacity = getMsgQueueCapacity();
+        long endpointCount = getEndpointCount();
+        long activeConnCount = getActiveConnCount();
+
+        // Calculate derived metrics
+        long total = succeededMsgCount + failedMsgCount;
+        double successRate = total == 0 ? 0.0 : (double) succeededMsgCount / total;
+        double queueUtilization = msgQueueCapacity == 0 ? 0.0 : (double) msgQueueSize / msgQueueCapacity;
+
+        // Build formatted string
         StringBuilder sb = new StringBuilder();
         sb.append("TGLog Metrics:").append(System.lineSeparator());
         sb.append("====================").append(System.lineSeparator());
 
         // Message metrics
-        sb.append(String.format("Requests:       %,d%n", getRequestMsgCount()));
-        sb.append(String.format("Enqueued:       %,d%n", getEnqueuedMsgCount()));
-        sb.append(String.format("Dequeued:       %,d%n", getDequeuedMsgCount()));
-        sb.append(String.format("Succeeded:      %,d%n", getSucceededMsgCount()));
-        sb.append(String.format("Failed:         %,d%n", getFailedMsgCount()));
-        sb.append(String.format("Timeout:        %,d%n", getTimeoutMsgCount()));
-        sb.append(String.format("Retry:          %,d%n", getRetryMsgCount()));
-        sb.append(String.format("Dropped:        %,d%n", getDroppedMsgCount()));
-        sb.append(String.format("Success Rate:   %.2f%%%n", getSuccessRate() * 100));
+        sb.append(String.format("Requests:       %,d%n", requestMsgCount));
+        sb.append(String.format("Enqueued:       %,d%n", enqueuedMsgCount));
+        sb.append(String.format("Dequeued:       %,d%n", dequeuedMsgCount));
+        sb.append(String.format("Succeeded:      %,d%n", succeededMsgCount));
+        sb.append(String.format("Failed:         %,d%n", failedMsgCount));
+        sb.append(String.format("Timeout:        %,d%n", timeoutMsgCount));
+        sb.append(String.format("Retry:          %,d%n", retryMsgCount));
+        sb.append(String.format("Dropped:        %,d%n", droppedMsgCount));
+        sb.append(String.format("Success Rate:   %.2f%%%n", successRate * 100));
 
         // Queue metrics
         sb.append(String.format("Queue Size:     %,d / %,d (%.1f%%)%n",
-                getMsgQueueSize(),
-                getMsgQueueCapacity(),
-                getQueueUtilization() * 100));
+                msgQueueSize,
+                msgQueueCapacity,
+                queueUtilization * 100));
 
         // Connection metrics
-        sb.append(String.format("Connections:    %,d active%n", getActiveConnCount()));
-        sb.append(String.format("Conn Opened:    %,d%n", getOpenedConnCount()));
-        sb.append(String.format("Conn Closed:    %,d%n", getClosedConnCount()));
-        sb.append(String.format("Conn Errors:    %,d%n", getErrorConnCount()));
+        sb.append(String.format("Connections:    %,d active%n", activeConnCount));
+        sb.append(String.format("Conn Opened:    %,d%n", openedConnCount));
+        sb.append(String.format("Conn Closed:    %,d%n", closedConnCount));
+        sb.append(String.format("Conn Errors:    %,d%n", errorConnCount));
 
         // Endpoint metrics
-        sb.append(String.format("Endpoints:      %,d%n", getEndpointCount()));
-        sb.append(String.format("EP Added:       %,d%n", getAddEndpointCount()));
-        sb.append(String.format("EP Removed:     %,d%n", getRemoveEndpointCount()));
+        sb.append(String.format("Endpoints:      %,d%n", endpointCount));
+        sb.append(String.format("EP Added:       %,d%n", addEndpointCount));
+        sb.append(String.format("EP Removed:     %,d%n", removeEndpointCount));
 
         // Rescued bytes
-        sb.append(String.format("Rescued Bytes:  %,d%n", getRescuedMsgBytes()));
+        sb.append(String.format("Rescued Bytes:  %,d%n", rescuedMsgBytes));
 
         return sb.toString();
     }
