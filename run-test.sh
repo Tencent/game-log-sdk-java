@@ -6,104 +6,38 @@ set -e
 
 # Check if compiled
 if [ ! -d "target/classes" ]; then
-    echo "Not compiled yet. Running Maven compile..."
-    mvn compile
+    echo "Error: Project not compiled. Please run ./compile.sh first"
+    exit 1
 fi
 
-echo "Running Performance Test..."
-echo "==========================="
-echo ""
+# Check if integration tests are compiled
+if [ ! -d "target/test-classes" ]; then
+    echo "Error: Integration tests not compiled. Please run ./compile.sh first"
+    exit 1
+fi
 
-# Copy dependencies if not exists (including test scope for Guava)
-if [ ! -d "target/lib" ]; then
+# Check if TglogClientTest exists
+if [ ! -f "target/test-classes/com/tencent/tglog/TglogClientTest.class" ]; then
+    echo "Error: TglogClientTest.class not found. Please run ./compile.sh first"
+    exit 1
+fi
+
+# Build classpath
+CLASSPATH="target/classes:target/test-classes"
+
+# Add all jars from target/lib to classpath (if exists)
+if [ -d "target/lib" ]; then
+    for jar in target/lib/*.jar; do
+        CLASSPATH="$CLASSPATH:$jar"
+    done
+else
+    # Copy dependencies if not exists
     echo "Copying Maven dependencies..."
     mvn -q dependency:copy-dependencies -DoutputDirectory=target/lib -DincludeScope=test
-fi
-
-# Compile integration tests if needed
-if [ ! -d "target/integration-test-classes" ]; then
-    echo "Compiling integration tests..."
-    mkdir -p target/integration-test-classes
-
-    # Build classpath for compilation
-    COMPILE_CP="target/classes"
-    for jar in target/lib/*.jar; do
-        COMPILE_CP="$COMPILE_CP:$jar"
-    done
-
-    javac -d target/integration-test-classes \
-        -cp "$COMPILE_CP" \
-        -encoding UTF-8 \
-        src/integration-test/java/com/tencent/tglog/*.java
-fi
-
-# Default parameters
-PARAMS=""
-
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -h|--host)
-            PARAMS="$PARAMS -h $2"
-            shift 2
-            ;;
-        -p|--port)
-            PARAMS="$PARAMS -p $2"
-            shift 2
-            ;;
-        -m|--messages)
-            PARAMS="$PARAMS -m $2"
-            shift 2
-            ;;
-        -w|--workers)
-            PARAMS="$PARAMS -w $2"
-            shift 2
-            ;;
-        -b|--batch-size)
-            PARAMS="$PARAMS -b $2"
-            shift 2
-            ;;
-        -r|--rate-limit)
-            PARAMS="$PARAMS -r $2"
-            shift 2
-            ;;
-        --tcp)
-            PARAMS="$PARAMS --tcp"
-            shift
-            ;;
-        --udp)
-            PARAMS="$PARAMS --udp"
-            shift
-            ;;
-        -c|--callback)
-            PARAMS="$PARAMS -c"
-            shift
-            ;;
-        -d|--debug)
-            PARAMS="$PARAMS -d"
-            shift
-            ;;
-        --help)
-            java -cp target/classes:target/integration-test-classes com.tencent.tglog.TglogClientTest --help
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Use --help for usage information"
-            exit 1
-            ;;
-    esac
-done
-
-# Build classpath with Maven dependencies
-CLASSPATH="target/classes:target/test-classes:target/integration-test-classes"
-
-# Add all jars from target/lib to classpath
-if [ -d "target/lib" ]; then
     for jar in target/lib/*.jar; do
         CLASSPATH="$CLASSPATH:$jar"
     done
 fi
 
-# Run test
-java -cp "$CLASSPATH" com.tencent.tglog.TglogClientTest $PARAMS
+# Run test with all arguments passed through
+java -cp "$CLASSPATH" com.tencent.tglog.TglogClientTest "$@"
