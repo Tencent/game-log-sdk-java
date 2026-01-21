@@ -5,6 +5,66 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-01-21
+
+### 问题修复
+- **修复高水位处理逻辑**：
+  - 使用 `config.getWriteHighWatermark()` 替代硬编码的 `MAX_OUTPUT_BUFFER_SIZE`
+  - 当输出缓冲区超过高水位时返回 0（而非 -1），表示"尝试下一个连接"而非"连接错误"
+  - Worker 现在能正确区分：`sent==0`（高水位超限，尝试下一个连接）和 `sent<0`（连接错误，关闭连接）
+  - 添加配置值 ≤ 0 时的保护，自动回退到默认值 32MB（防止误配置）
+  - 移除 `writePendingData()` 中的高水位检查（救援数据不受限制，与 C 版本一致）
+  - 修复 UDP 连接的 `isWritable()` 检查使用正确的高水位配置
+  - 这些修复防止了高负载下连接被错误标记为失败，允许 Worker 尝试其他连接
+
+- **修复紧急连接补充逻辑**：
+  - `getConnection()` 现在会在发现没有连接时尝试紧急补充（与 C 版本一致）
+  - 添加 2 秒间隔保护，避免过于频繁的补充尝试
+  - 重命名 `emergencySupplementCheck()` 为 `emergencySupplementConnection()`，更准确反映其功能
+  - 移除定时器回调中的冗余时间间隔检查（已由 5 秒定时器保证）
+  - 修复重复更新 `lastEmergencySupplementTime` 的问题（现在由调用者统一更新）
+  - 两个补充机制（定时器和 getConnection）共享同一个时间戳，协同工作
+  - 提高了连接全部丢失时的恢复能力
+
+### 新增功能
+- **连接关闭检测**：
+  - 连接建立后注册 `OP_READ` 事件，及时检测服务器主动关闭连接
+  - 添加 `handleReadable()` 方法处理可读事件：
+    - TCP：检测连接关闭（`bytesRead < 0`）并触发错误处理
+    - TCP/UDP：丢弃意外接收的数据（TGLog v1 协议无响应）
+  - 在 `handleConnectionError()` 中立即取消 `OP_READ` 监听，避免延迟关闭期间的 busy-wait
+  - 添加 INFO 级别日志便于诊断问题
+  - 提高了连接状态准确性，不再仅依赖写入失败来检测连接关闭
+
+- **可配置的 Prometheus 指标注册表**：
+  - `TglogConfig` 新增 `setCollectorRegistry()` 方法
+  - 支持自定义 `CollectorRegistry`，便于测试隔离和多租户场景
+  - 默认使用 `CollectorRegistry.defaultRegistry`
+  - 应用程序可自行决定如何暴露指标（HTTP endpoint、pushgateway 等）
+
+### 测试改进
+- **新增并发发送测试**（`ConcurrentSendTest`）：
+  - 测试多线程并发发送场景
+  - 可配置消息数量、发送线程数、Worker 数量、队列容量等参数
+  - 提供详细的指标输出和一致性检查
+  - 验证回调机制的正确性
+
+- **新增空闲连接测试**（`IdleConnectionTest`）：
+  - 测试连接在空闲期后的稳定性（默认 5 分钟）
+  - 验证空闲后消息仍能成功发送
+  - 可配置空闲时长和测试消息数量
+  - 提供详细的测试文档（`docs/IDLE_CONNECTION_TEST.md`）
+
+- **测试脚本改进**：
+  - 简化测试脚本参数处理
+  - 添加 `run-concurrent-test.sh` 和 `run-idle-test.sh`
+  - 编译脚本添加新测试的使用说明
+
+### 代码改进
+- 统一 `toString()` 和 `toJson()` 的输出格式，减少不一致性
+- 改进日志输出，提供更清晰的调试信息
+- 添加详细注释说明与 C 版本的对应关系
+
 ## [1.0.1] - 2026-01-15
 
 ### 问题修复
@@ -171,5 +231,6 @@
 
 ---
 
+[1.0.2]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.2
 [1.0.1]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.1
 [1.0.0]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.0
