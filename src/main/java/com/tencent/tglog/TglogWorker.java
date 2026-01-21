@@ -426,7 +426,7 @@ class TglogWorker implements Runnable {
 
                 // Emergency supplement check (every 5s)
                 if (now - lastEmergencySupplementTime >= EMERGENCY_SUPPLEMENT_INTERVAL_MS) {
-                    emergencySupplementCheck();
+                    emergencySupplementConnection();
                     lastEmergencySupplementTime = now;
                 }
 
@@ -1048,9 +1048,27 @@ class TglogWorker implements Runnable {
 
     /**
      * Get a connection using round-robin.
+     * Like C version, attempts emergency supplement if no connections available.
      */
     private TglogConnection getConnection() {
         if (connections.isEmpty()) {
+            logger.error("Worker {} no available connections", workerId);
+
+            // Check time interval to avoid frequent emergency supplement attempts (like C version)
+            long now = System.currentTimeMillis();
+            long elapsed = now - lastEmergencySupplementTime;
+
+            if (elapsed >= EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS) {
+                // All connections are closed, try to supplement new connections
+                logger.info("Worker {} emergency supplement connections, elapsed: {} ms",
+                        workerId, elapsed);
+                supplementConnection();
+                lastEmergencySupplementTime = now;
+            } else {
+                logger.debug("Worker {} skip emergency supplement due to time interval, elapsed: {} ms",
+                        workerId, elapsed);
+            }
+
             return null;
         }
 
@@ -1347,18 +1365,15 @@ class TglogWorker implements Runnable {
     }
 
     /**
-     * Emergency supplement check.
+     * Emergency supplement connection (called by timer every 5 seconds).
+     * Like C version, directly supplements if no connections available.
+     * Note: lastEmergencySupplementTime is updated by the caller (runEventLoop).
      */
-    private void emergencySupplementCheck() {
+    private void emergencySupplementConnection() {
         if (connections.isEmpty()) {
-            long now = System.currentTimeMillis();
-            long elapsed = now - lastEmergencySupplementTime;
-
-            if (elapsed >= EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS) {
-                logger.warn("Worker {} emergency supplement: no connections available", workerId);
-                supplementConnection();
-                lastEmergencySupplementTime = now;
-            }
+            logger.info("Worker {} emergency supplement: no connections available, try to supplement",
+                    workerId);
+            supplementConnection();
         }
     }
 
