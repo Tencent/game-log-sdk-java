@@ -516,11 +516,12 @@ class TglogWorker implements Runnable {
             try {
                 if (key.isConnectable()) {
                     handleConnectable(conn);
+                } else if (key.isReadable()) {
+                    // OP_READ triggered - check if connection is closed or discard unexpected data
+                    handleReadable(conn);
                 } else if (key.isWritable()) {
                     conn.tryFlush();
                 }
-                // Note: We don't monitor OP_READ (like C version which disables EV_READ)
-                // Connection close will be detected by write failures
             } catch (Exception e) {
                 logger.error("Error processing key for {}", conn.getEndpoint(), e);
                 handleConnectionError(conn);
@@ -594,12 +595,60 @@ class TglogWorker implements Runnable {
     }
 
     /**
+     * Handle readable event.
+     * For TGLog v1 protocol (no responses), OP_READ typically means connection closed by peer.
+     */
+    private void handleReadable(TglogConnection conn) throws IOException {
+        logger.info("Worker {} handleReadable triggered for connection {}", workerId, conn.getEndpoint());
+
+        // TGLog v1 protocol has no responses, so any readable data likely means:
+        // 1. Connection closed by peer (read returns -1 for TCP)
+        // 2. Unexpected data (just discard it)
+
+        if (config.getProtocol() == TglogConfig.Protocol.TCP) {
+            java.nio.channels.SocketChannel channel =
+                (java.nio.channels.SocketChannel) conn.getSelectionKey().channel();
+            java.nio.ByteBuffer testBuf = java.nio.ByteBuffer.allocate(1024);
+            int bytesRead = channel.read(testBuf);
+
+            if (bytesRead < 0) {
+                // Connection closed by peer
+                logger.warn("Worker {} TCP connection closed by peer: {}", workerId, conn.getEndpoint());
+                handleConnectionError(conn);
+            } else if (bytesRead > 0) {
+                // Unexpected data received, just discard it
+                logger.info("Worker {} received {} bytes unexpected TCP data from {}, discarding",
+                        workerId, bytesRead, conn.getEndpoint());
+            }
+            // bytesRead == 0 means no data available yet, ignore
+        } else {
+            // UDP
+            java.nio.channels.DatagramChannel channel =
+                (java.nio.channels.DatagramChannel) conn.getSelectionKey().channel();
+            java.nio.ByteBuffer testBuf = java.nio.ByteBuffer.allocate(1024);
+            int bytesRead = channel.read(testBuf);
+
+            if (bytesRead > 0) {
+                // Unexpected data received, just discard it
+                logger.info("Worker {} received {} bytes unexpected UDP data from {}, discarding",
+                        workerId, bytesRead, conn.getEndpoint());
+            }
+            // UDP doesn't have connection close, bytesRead won't be -1
+        }
+    }
+
+    /**
      * Handle connection error.
      */
     private void handleConnectionError(TglogConnection conn) {
         // Remove from both lists
         connections.remove(conn);
         connectingConns.remove(conn);
+
+        // Immediately unregister OP_READ to avoid busy-wait during delayed close
+        if (conn.getSelectionKey() != null && conn.getSelectionKey().isValid()) {
+            conn.getSelectionKey().interestOps(0);
+        }
 
         // Mark endpoint unavailable
         markEndpointUnavailable(conn.getEndpoint());

@@ -153,12 +153,10 @@ class TglogConnection {
                     // Calculate lifetime with jitter to avoid all connections expiring at the same time
                     lifetimeWithJitterMs = calculateLifetimeWithJitter();
 
-                    // Don't monitor OP_READ (like C version which disables EV_READ)
-                    // TGLog v1 has no responses, so we don't need to read data
-                    // Connection close will be detected by write failures
+                    // Monitor OP_READ to detect connection close by peer
                     // OP_WRITE will be added dynamically when we have data to send
                     if (selectionKey != null) {
-                        selectionKey.interestOps(0);  // No events by default
+                        selectionKey.interestOps(SelectionKey.OP_READ);
                     }
 
                     logger.info("Connected to {} (lifetime: {}ms)", endpoint, lifetimeWithJitterMs);
