@@ -153,8 +153,10 @@ class TglogConnection {
                     // Calculate lifetime with jitter to avoid all connections expiring at the same time
                     lifetimeWithJitterMs = calculateLifetimeWithJitter();
 
-                    // Don't register OP_WRITE by default to avoid busy-wait
-                    // OP_WRITE will be registered only when we have data to send
+                    // Don't monitor OP_READ (like C version which disables EV_READ)
+                    // TGLog v1 has no responses, so we don't need to read data
+                    // Connection close will be detected by write failures
+                    // OP_WRITE will be added dynamically when we have data to send
                     if (selectionKey != null) {
                         selectionKey.interestOps(0);  // No events by default
                     }
@@ -188,7 +190,7 @@ class TglogConnection {
      * Handles partial writes by buffering unsent data (like C's bufferevent).
      *
      * @param buffer Data to send
-     * @return Number of bytes that were accepted (may be buffered), or -1 on error
+     * @return Number of bytes that were accepted (may be buffered), 0 if high watermark exceeded, or -1 on error
      */
     public int send(ByteBuffer buffer) throws IOException {
         if (state != State.CONNECTED) {
@@ -205,10 +207,13 @@ class TglogConnection {
 
             // If output buffer is not empty after flush, buffer this data too
             if (!outputBuffer.isEmpty()) {
-                // Check buffer size limit
-                if (outputBufferSize + originalRemaining > MAX_OUTPUT_BUFFER_SIZE) {
-                    logger.error("Output buffer full: {} bytes", outputBufferSize);
-                    return -1;
+                // Check high watermark limit (like C version)
+                // Use default if configured value is <= 0 (like C version)
+                int highWatermark = config.getWriteHighWatermark() > 0 ?
+                        config.getWriteHighWatermark() : MAX_OUTPUT_BUFFER_SIZE;
+                if (outputBufferSize > highWatermark) {
+                    logger.error("Output buffer exceeds high watermark: {} > {}", outputBufferSize, highWatermark);
+                    return 0; // Return 0 to indicate high watermark exceeded (not an error)
                 }
 
                 // Buffer the data
@@ -271,7 +276,7 @@ class TglogConnection {
      * Handles partial writes by buffering unsent data (like C's bufferevent).
      *
      * @param buffers Array of buffers to send
-     * @return Number of bytes that were accepted (may be buffered), or -1 on error
+     * @return Number of bytes that were accepted (may be buffered), 0 if high watermark exceeded, or -1 on error
      */
     public long send(ByteBuffer[] buffers) throws IOException {
         if (state != State.CONNECTED) {
@@ -292,10 +297,13 @@ class TglogConnection {
 
             // If output buffer is not empty after flush, buffer all data
             if (!outputBuffer.isEmpty()) {
-                // Check buffer size limit
-                if (outputBufferSize + totalSize > MAX_OUTPUT_BUFFER_SIZE) {
-                    logger.error("Output buffer full: {} bytes", outputBufferSize);
-                    return -1;
+                // Check high watermark limit (like C version)
+                // Use default if configured value is <= 0 (like C version)
+                int highWatermark = config.getWriteHighWatermark() > 0 ?
+                        config.getWriteHighWatermark() : MAX_OUTPUT_BUFFER_SIZE;
+                if (outputBufferSize > highWatermark) {
+                    logger.error("Output buffer exceeds high watermark: {} > {}", outputBufferSize, highWatermark);
+                    return 0; // Return 0 to indicate high watermark exceeded (not an error)
                 }
 
                 // Buffer all data
@@ -476,6 +484,7 @@ class TglogConnection {
     /**
      * Write pending data from another connection (for rescue).
      * This is used to transfer unsent data from a closing connection.
+     * Note: We don't check high watermark here because this is rescue data (like C version).
      */
     public boolean writePendingData(Queue<ByteBuffer> pendingData) {
         if (pendingData == null || pendingData.isEmpty()) {
@@ -488,14 +497,8 @@ class TglogConnection {
             totalSize += buf.remaining();
         }
 
-        // Check if we have space
-        if (outputBufferSize + totalSize > MAX_OUTPUT_BUFFER_SIZE) {
-            logger.error("Cannot rescue pending data: output buffer would exceed limit ({} > {})",
-                    (outputBufferSize + totalSize), MAX_OUTPUT_BUFFER_SIZE);
-            return false;
-        }
-
         // Add all pending buffers to output buffer
+        // Note: We don't check high watermark here because this is rescue data (like C version)
         for (ByteBuffer buf : pendingData) {
             if (buf.hasRemaining()) {
                 outputBuffer.offer(buf);
@@ -602,9 +605,9 @@ class TglogConnection {
             return false;
         }
 
-        // UDP is always writable when connected (unless buffer is full)
+        // UDP is always writable when connected (unless buffer exceeds high watermark)
         if (protocol == TglogConfig.Protocol.UDP) {
-            return outputBufferSize < MAX_OUTPUT_BUFFER_SIZE;
+            return outputBufferSize <= config.getWriteHighWatermark();
         }
 
         // TCP needs to check selection key

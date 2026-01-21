@@ -519,6 +519,8 @@ class TglogWorker implements Runnable {
                 } else if (key.isWritable()) {
                     conn.tryFlush();
                 }
+                // Note: We don't monitor OP_READ (like C version which disables EV_READ)
+                // Connection close will be detected by write failures
             } catch (Exception e) {
                 logger.error("Error processing key for {}", conn.getEndpoint(), e);
                 handleConnectionError(conn);
@@ -806,6 +808,10 @@ class TglogWorker implements Runnable {
 
     /**
      * Send batch via TCP.
+     * Following C version's logic:
+     * - sent == 0: high watermark exceeded, try next connection
+     * - sent < 0: connection error, mark connection as failed and try next
+     * - sent > 0: success or partial send (buffered)
      */
     private SendResult sendBatchTcp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
         int tryCount = 0;
@@ -817,8 +823,10 @@ class TglogWorker implements Runnable {
         while (tryCount < connections.size()) {
             long sent = conn.send(buffers);
 
+            // Connection error - mark as failed and try another connection
             if (sent < 0) {
-                // Error - try another connection
+                logger.error("Worker {} TCP send error on connection {}, trying next connection",
+                        workerId, conn.getEndpoint());
                 handleConnectionError(conn);
                 tryCount++;
 
@@ -830,6 +838,25 @@ class TglogWorker implements Runnable {
                     continue;
                 }
 
+                return SendResult.error(TglogErrorCode.SEND_FAILED);
+            }
+
+            // High watermark exceeded - try another connection (like C version)
+            if (sent == 0) {
+                logger.warn("Worker {} connection {} exceeded high watermark, trying next connection",
+                        workerId, conn.getEndpoint());
+                tryCount++;
+
+                if (tryCount < connections.size()) {
+                    conn = getConnection();
+                    if (conn == null) {
+                        return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
+                    }
+                    continue;
+                }
+
+                // All connections exceeded high watermark, need to backoff and retry
+                logger.warn("Worker {} all connections exceeded high watermark, will retry later", workerId);
                 return SendResult.error(TglogErrorCode.SEND_FAILED);
             }
 
