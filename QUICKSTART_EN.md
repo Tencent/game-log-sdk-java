@@ -44,7 +44,7 @@ Add the following dependency to your `pom.xml`:
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
@@ -61,7 +61,7 @@ mvn clean package
 
 # JAR file will be in target/ directory
 # Use the JAR
-java -cp target/tglog-java-1.0.2.jar:your-app.jar YourApp
+java -cp target/tglog-java-1.0.0.jar:your-app.jar YourApp
 ```
 
 ### Method 3: Use Compiled Classes Directly

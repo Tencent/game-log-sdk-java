@@ -46,9 +46,9 @@ mvn package
 ```
 
 这将生成：
-- `target/tglog-java-1.0.2.jar` - 主库JAR文件
-- `target/tglog-java-1.0.2-jar-with-dependencies.jar` - 包含所有依赖的Fat JAR
-- `target/tglog-java-1.0.2-sources.jar` - 源码JAR
+- `target/tglog-java-1.0.0.jar` - 主库JAR文件
+- `target/tglog-java-1.0.0-jar-with-dependencies.jar` - 包含所有依赖的Fat JAR
+- `target/tglog-java-1.0.0-sources.jar` - 源码JAR
 
 #### 清理构建产物
 ```bash

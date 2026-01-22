@@ -12,7 +12,7 @@ Add the following to your project's `pom.xml`:
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
@@ -164,7 +164,7 @@ Add to your project's `pom.xml`:
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.0</version>
 </dependency>
 
 <!-- SLF4J implementation (choose based on your project) -->
@@ -178,7 +178,7 @@ Add to your project's `pom.xml`:
 **Or use JAR file directly:**
 ```bash
 mvn package
-# Use target/tglog-java-1.0.2.jar
+# Use target/tglog-java-1.0.0.jar
 ```
 
 **System Requirements:**
