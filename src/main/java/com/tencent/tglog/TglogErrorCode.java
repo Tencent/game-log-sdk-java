@@ -47,6 +47,18 @@ public enum TglogErrorCode {
     /** Worker is busy */
     WORKER_BUSY(10013, "Worker is busy"),
 
+    /** No matching request for response */
+    NO_MATCH_REQ_FOR_RSP(10014, "No matching request for response"),
+
+    /** Connection closed by peer */
+    CONN_CLOSED_BY_PEER(10015, "Connection closed by peer"),
+
+    /** Connection EAGAIN error (socket buffer full) */
+    CONN_EAGAIN(10016, "Connection EAGAIN error"),
+
+    /** Bad flag */
+    BAD_FLAG(10017, "Bad flag"),
+
     /** Unknown error */
     UNKNOWN(20001, "Unknown error");
 

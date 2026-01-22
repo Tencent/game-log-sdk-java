@@ -34,6 +34,7 @@ public class TglogMetrics {
     private final Counter openedConnCount;
     private final Counter closedConnCount;
     private final Counter errorConnCount;
+    private final Counter eagainErrCount;
 
     private final Counter addEndpointCount;
     private final Counter removeEndpointCount;
@@ -124,6 +125,12 @@ public class TglogMetrics {
                 .labelNames("worker_id")
                 .register(registry);
 
+        this.eagainErrCount = Counter.build()
+                .name("tglog_eagain_errors_total")
+                .help("Total number of EAGAIN errors (socket buffer full)")
+                .labelNames("worker_id")
+                .register(registry);
+
         this.addEndpointCount = Counter.build()
                 .name("tglog_add_endpoints_total")
                 .help("Total number of endpoints added")
@@ -211,6 +218,10 @@ public class TglogMetrics {
         errorConnCount.labels(String.valueOf(workerId)).inc();
     }
 
+    public void incrementEagainErr(int workerId) {
+        eagainErrCount.labels(String.valueOf(workerId)).inc();
+    }
+
     public void incrementAddEndpoint() {
         addEndpointCount.inc();
     }
@@ -296,6 +307,15 @@ public class TglogMetrics {
     public long getErrorConnCount() {
         // Sum across all worker_id labels (only _total samples, not _created)
         return (long) errorConnCount.collect().stream()
+                .flatMap(mf -> mf.samples.stream())
+                .filter(s -> s.name.endsWith("_total"))
+                .mapToDouble(s -> s.value)
+                .sum();
+    }
+
+    public long getEagainErrCount() {
+        // Sum across all worker_id labels (only _total samples, not _created)
+        return (long) eagainErrCount.collect().stream()
                 .flatMap(mf -> mf.samples.stream())
                 .filter(s -> s.name.endsWith("_total"))
                 .mapToDouble(s -> s.value)
@@ -404,6 +424,7 @@ public class TglogMetrics {
         long openedConnCount = getOpenedConnCount();
         long closedConnCount = getClosedConnCount();
         long errorConnCount = getErrorConnCount();
+        long eagainErrCount = getEagainErrCount();
         long addEndpointCount = getAddEndpointCount();
         long removeEndpointCount = getRemoveEndpointCount();
         long rescuedMsgBytes = getRescuedMsgBytes();
@@ -432,6 +453,7 @@ public class TglogMetrics {
         sb.append("    \"opened_conn_count\": ").append(openedConnCount).append(",\n");
         sb.append("    \"closed_conn_count\": ").append(closedConnCount).append(",\n");
         sb.append("    \"error_conn_count\": ").append(errorConnCount).append(",\n");
+        sb.append("    \"eagain_err_count\": ").append(eagainErrCount).append(",\n");
         sb.append("    \"add_endpoint_count\": ").append(addEndpointCount).append(",\n");
         sb.append("    \"remove_endpoint_count\": ").append(removeEndpointCount).append(",\n");
         sb.append("    \"rescued_msg_bytes\": ").append(rescuedMsgBytes).append("\n");
@@ -470,6 +492,7 @@ public class TglogMetrics {
         long openedConnCount = getOpenedConnCount();
         long closedConnCount = getClosedConnCount();
         long errorConnCount = getErrorConnCount();
+        long eagainErrCount = getEagainErrCount();
         long addEndpointCount = getAddEndpointCount();
         long removeEndpointCount = getRemoveEndpointCount();
         long rescuedMsgBytes = getRescuedMsgBytes();
@@ -510,6 +533,7 @@ public class TglogMetrics {
         sb.append(String.format("Conn Opened:    %,d%n", openedConnCount));
         sb.append(String.format("Conn Closed:    %,d%n", closedConnCount));
         sb.append(String.format("Conn Errors:    %,d%n", errorConnCount));
+        sb.append(String.format("EAGAIN Errors:  %,d%n", eagainErrCount));
 
         // Endpoint metrics
         sb.append(String.format("Endpoints:      %,d%n", endpointCount));

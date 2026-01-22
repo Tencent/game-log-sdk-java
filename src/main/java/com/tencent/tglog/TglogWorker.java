@@ -307,7 +307,7 @@ class TglogWorker implements Runnable {
             int successfulConns = 0;
             for (int i = 0; i < connectionsPerEndpoint; i++) {
                 try {
-                    TglogConnection conn = new TglogConnection(endpoint, config);
+                    TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
                     conn.connect(selector);
                     connectingConns.add(conn);
                     initConnCount.incrementAndGet();
@@ -1139,7 +1139,7 @@ class TglogWorker implements Runnable {
                 int successfulConns = 0;
                 for (int i = 0; i < connectionsPerEndpoint; i++) {
                     try {
-                        TglogConnection conn = new TglogConnection(endpoint, config);
+                        TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
                         conn.connect(selector);
                         connectingConns.add(conn);
                         successfulConns++;
@@ -1216,7 +1216,7 @@ class TglogWorker implements Runnable {
             }
 
             try {
-                TglogConnection newConn = new TglogConnection(endpoint, config);
+                TglogConnection newConn = new TglogConnection(endpoint, config, metrics, workerId);
                 newConn.connect(selector);
                 connectingConns.add(newConn);
 
@@ -1352,7 +1352,7 @@ class TglogWorker implements Runnable {
             // Create if below target
             if (existing < connectionsPerEndpoint) {
                 try {
-                    TglogConnection conn = new TglogConnection(endpoint, config);
+                    TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
                     conn.connect(selector);
                     connectingConns.add(conn);
                     return true;
@@ -1376,7 +1376,7 @@ class TglogWorker implements Runnable {
         int randomIndex = random.nextInt(currentEndpoints.size());
         InetSocketAddress endpoint = currentEndpoints.get(randomIndex);
         try {
-            TglogConnection conn = new TglogConnection(endpoint, config);
+            TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
             conn.connect(selector);
             connectingConns.add(conn);
             logger.info("Worker {} force supplement connection to {} (exceeds target)", workerId, endpoint);
@@ -1409,7 +1409,7 @@ class TglogWorker implements Runnable {
         int successfulConns = 0;
         for (int i = 0; i < connectionsPerEndpoint; i++) {
             try {
-                TglogConnection conn = new TglogConnection(endpoint, config);
+                TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
                 conn.connect(selector);
                 connectingConns.add(conn);
                 successfulConns++;

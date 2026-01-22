@@ -43,6 +43,8 @@ class TglogConnection {
     private final TglogConfig.Protocol protocol;
     private final InetSocketAddress endpoint;
     private final TglogConfig config;
+    private final TglogMetrics metrics;
+    private final int workerId;
 
     private SocketChannel tcpChannel;
     private DatagramChannel udpChannel;
@@ -64,10 +66,12 @@ class TglogConnection {
     private static final int MAX_OUTPUT_BUFFER_SIZE = 32 * 1024 * 1024; // 32MB like C version
     private int outputBufferSize = 0;
 
-    public TglogConnection(InetSocketAddress endpoint, TglogConfig config) {
+    public TglogConnection(InetSocketAddress endpoint, TglogConfig config, TglogMetrics metrics, int workerId) {
         this.endpoint = endpoint;
         this.protocol = config.getProtocol();
         this.config = config;
+        this.metrics = metrics;
+        this.workerId = workerId;
     }
 
     /**
@@ -242,6 +246,12 @@ class TglogConnection {
                 lastActiveTime.set(System.currentTimeMillis());
             }
 
+            // Handle EAGAIN (sent == 0 means socket buffer full)
+            if (sent == 0 && buffer.hasRemaining()) {
+                metrics.incrementEagainErr(workerId);
+                logger.debug("EAGAIN: socket buffer full for {}", endpoint);
+            }
+
             // Handle partial write - buffer remaining data
             if (buffer.hasRemaining()) {
                 int remaining = buffer.remaining();
@@ -345,6 +355,12 @@ class TglogConnection {
                 }
             }
 
+            // Handle EAGAIN (sent == 0 means socket buffer full)
+            if (sent == 0 && hasRemaining) {
+                metrics.incrementEagainErr(workerId);
+                logger.debug("EAGAIN: socket buffer full for {}", endpoint);
+            }
+
             // Handle partial write - buffer remaining data
             if (hasRemaining) {
                 long remaining = 0;
@@ -407,6 +423,11 @@ class TglogConnection {
 
             // If buffer not fully sent, stop (socket buffer full)
             if (buf.hasRemaining()) {
+                // EAGAIN: sent == 0 means socket buffer full
+                if (sent == 0) {
+                    metrics.incrementEagainErr(workerId);
+                    logger.debug("EAGAIN during flush: socket buffer full for {}", endpoint);
+                }
                 break;
             }
 
