@@ -10,6 +10,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -31,6 +32,7 @@ import java.util.concurrent.atomic.AtomicLong;
 class TglogWorker implements Runnable {
 
     private static final Logger logger = LoggerFactory.getLogger(TglogWorker.class);
+    private static final Random random = new Random();
 
     enum State {
         INIT,       // Worker initialized
@@ -1358,10 +1360,31 @@ class TglogWorker implements Runnable {
                     logger.warn("Failed to supplement connection for {}", endpoint, e);
                     markEndpointUnavailable(endpoint);
                 }
+            } else {
+                logger.warn("Worker {} existing connections for endpoint {} is {}, which is greater than target {}",
+                        workerId, endpoint, existing, connectionsPerEndpoint);
             }
         }
 
-        return false;
+        // Like C version: if all endpoints are at target, randomly select one and force supplement
+        if (currentEndpoints.isEmpty()) {
+            logger.warn("Worker {} no endpoints available", workerId);
+            return false;
+        }
+
+        // Randomly select an endpoint
+        int randomIndex = random.nextInt(currentEndpoints.size());
+        InetSocketAddress endpoint = currentEndpoints.get(randomIndex);
+        try {
+            TglogConnection conn = new TglogConnection(endpoint, config);
+            conn.connect(selector);
+            connectingConns.add(conn);
+            logger.info("Worker {} force supplement connection to {} (exceeds target)", workerId, endpoint);
+            return true;
+        } catch (IOException e) {
+            logger.error("Worker {} failed to force supplement connection for {}", workerId, endpoint, e);
+            return false;
+        }
     }
 
     /**
