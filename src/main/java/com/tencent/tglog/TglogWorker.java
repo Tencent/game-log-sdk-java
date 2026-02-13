@@ -10,7 +10,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -32,7 +32,6 @@ import java.util.concurrent.atomic.AtomicLong;
 class TglogWorker implements Runnable {
 
     private static final Logger logger = LoggerFactory.getLogger(TglogWorker.class);
-    private static final Random random = new Random();
 
     enum State {
         INIT,       // Worker initialized
@@ -1373,7 +1372,7 @@ class TglogWorker implements Runnable {
         }
 
         // Randomly select an endpoint
-        int randomIndex = random.nextInt(currentEndpoints.size());
+        int randomIndex = ThreadLocalRandom.current().nextInt(currentEndpoints.size());
         InetSocketAddress endpoint = currentEndpoints.get(randomIndex);
         try {
             TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);

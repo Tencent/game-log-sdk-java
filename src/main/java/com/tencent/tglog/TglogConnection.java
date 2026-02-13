@@ -13,7 +13,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.LinkedList;
 import java.util.Queue;
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
 class TglogConnection {
 
     private static final Logger logger = LoggerFactory.getLogger(TglogConnection.class);
-    private static final Random random = new Random();
+
 
     enum State {
         DISCONNECTED,
@@ -585,7 +585,7 @@ class TglogConnection {
         }
 
         // Random jitter in [0, maxJitterSec) seconds
-        int jitterSec = random.nextInt(maxJitterSec);
+        int jitterSec = ThreadLocalRandom.current().nextInt(maxJitterSec);
 
         // Total lifetime = base + jitter
         long lifetimeMs = (maxLifetimeSec + jitterSec) * 1000L;
