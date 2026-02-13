@@ -51,6 +51,10 @@ class Backoff {
         }
 
         // Calculate exponential backoff: initial * multiplier^(retryCount-1)
+        // For large retryCount, Math.pow may overflow to Infinity; cap early
+        if (retryCount - 1 > 30) {
+            return maxIntervalMs;
+        }
         double interval = initialIntervalMs * Math.pow(multiplier, retryCount - 1);
 
         // Cap at max interval
