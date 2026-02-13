@@ -179,7 +179,7 @@ class EndpointManager {
             try {
                 listener.accept(new ArrayList<>(newEndpoints));
             } catch (Exception e) {
-                logger.error("{}", "Error notifying endpoint change listener", e);
+                logger.error("Error notifying endpoint change listener", e);
             }
         }
     }

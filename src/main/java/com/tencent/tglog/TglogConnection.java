@@ -464,7 +464,7 @@ class TglogConnection {
                     unregisterWriteInterest();
                 }
             } catch (IOException e) {
-                logger.error("{}", "Failed to flush output buffer", e);
+                logger.error("Failed to flush output buffer", e);
                 state = State.ERROR;
             }
         }

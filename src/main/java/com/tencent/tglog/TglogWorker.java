@@ -365,7 +365,7 @@ class TglogWorker implements Runnable {
                 checkConnectingConnections();
 
             } catch (IOException e) {
-                logger.error("{}", "Error waiting for connections", e);
+                logger.error("Error waiting for connections", e);
                 break;
             }
         }
@@ -440,7 +440,7 @@ class TglogWorker implements Runnable {
                 }
 
             } catch (Exception e) {
-                logger.error("{}", "Error in event loop", e);
+                logger.error("Error in event loop", e);
             }
         }
 
@@ -1684,7 +1684,7 @@ class TglogWorker implements Runnable {
             try {
                 selector.close();
             } catch (IOException e) {
-                logger.error("{}", "Error closing selector", e);
+                logger.error("Error closing selector", e);
             }
         }
 
