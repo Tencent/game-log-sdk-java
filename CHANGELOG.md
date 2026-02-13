@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.0] - 2026-01-22
+## [1.0.0] - 2026-02-13
 
 这是 TGLog Pure Java Client 的首个正式稳定版本。本实现基于 C 版本，提供了等价的功能，同时采用了 Java 原生的特性和编程习惯。
 
@@ -101,11 +101,24 @@
   - 修复 `writePendingData()` 后未注册 `OP_WRITE` 导致救援数据无法及时发送的问题
   - 现在救援数据后会立即注册写事件，确保数据尽快发送
 
+- **修复延迟关闭连接的数据竞争**：
+  - 将延迟关闭逻辑从独立的 `closeScheduler` 线程收归 Worker 主线程
+  - 使用时间戳检查替代 `ScheduledExecutorService`，彻底消除跨线程并发访问风险
+  - 移除 `closeScheduler` 和 `pendingCloseTasks`，改用 `pendingCloseList` 在 Worker 主循环中处理
+  - 数据救援逻辑全部在 Worker 线程内执行，不再跨线程访问 `connections` 等非线程安全数据结构
+
+- **修复 cleanup 中潜在的无限循环**：
+  - 修复优雅关闭时 `drainConnectionBuffers` 可能无限循环的问题
+
+- **修复调试日志格式问题**
+
 - **其他修复**：
   - 修复清理过程中的调试日志问题
   - 修复日志消息未以换行符结尾时的验证问题
   - 修复连接资源泄漏，正确关闭待关闭任务中的连接
   - 修复连接关闭时可能的数据丢失问题，实现缓冲区排空机制
+  - 修复 Javadoc 格式问题
+  - 增加配置参数校验
 
 ### 性能优化
 
@@ -113,6 +126,18 @@
   - `BatchBuffer.prepareForSend()` 现在会缓存已准备的 ByteBuffer
   - 重试时直接重用缓存的 ByteBuffer，避免重复的内存分配和字符串转换
   - 在高重试率场景下显著降低 CPU 和内存开销
+
+- **缓存消息 payload 字节**：
+  - `LogMessage` 缓存序列化后的 payload 字节，避免重复序列化
+
+- **优化退避策略**：
+  - 退避间隔增加上限，防止指数退避时间过长
+
+- **裁剪 sendBuffers**：
+  - 批量发送后裁剪 `sendBuffers` 数组，使其匹配剩余消息数量，减少内存占用
+
+- **使用 ThreadLocalRandom**：
+  - 替换 `Random` 为 `ThreadLocalRandom`，减少多线程竞争
 
 - **优化指标方法**，提升性能
 - **优化端点更新处理逻辑**（先处理新增端点，再处理移除端点）
