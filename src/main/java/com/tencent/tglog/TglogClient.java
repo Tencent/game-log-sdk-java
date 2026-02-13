@@ -27,12 +27,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *     .setBatchingMaxMessages(50);
  *
  * try (TglogClient client = new TglogClient(config)) {
- *     client.send("battle|winner=1|loser=2\n", new TglogCallback() {
- *         public void onSuccess(String payload) {
+ *     client.send("battle|winner=1|loser=2\n", (payload, exception) -> {
+ *         if (exception == null) {
  *             System.out.println("Sent: " + payload);
- *         }
- *         public void onError(String payload, int code, String msg) {
- *             System.err.println("Failed: " + msg);
+ *         } else {
+ *             System.err.println("Failed: " + exception.getMessage());
  *         }
  *     });
  * }
