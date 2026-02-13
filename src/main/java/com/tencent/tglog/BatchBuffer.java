@@ -253,6 +253,21 @@ class BatchBuffer {
         // Remove sent messages
         messages.subList(0, sentCount).clear();
 
+        // Trim sendBuffers to match remaining messages (avoid stale cache on retry)
+        if (sendBuffers != null && sendBufferCount > 0) {
+            int remaining = sendBufferCount - sentCount;
+            if (remaining > 0) {
+                System.arraycopy(sendBuffers, sentCount, sendBuffers, 0, remaining);
+                for (int i = remaining; i < sendBufferCount; i++) {
+                    sendBuffers[i] = null;
+                }
+                sendBufferCount = remaining;
+            } else {
+                sendBuffers = null;
+                sendBufferCount = 0;
+            }
+        }
+
         // Reset create time if batch is now empty
         if (messages.isEmpty()) {
             createTime = 0;
