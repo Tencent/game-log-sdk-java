@@ -11,6 +11,11 @@ import io.prometheus.client.CollectorRegistry;
  * The metrics are registered with a CollectorRegistry which can be exposed by the
  * application integrating this SDK.
  *
+ * <p><b>Note:</b> Only one TglogClient instance per JVM is supported when using the
+ * default CollectorRegistry. Creating multiple instances with the same registry will
+ * cause metric registration conflicts. If multiple instances are needed, provide a
+ * separate CollectorRegistry for each via {@link TglogConfig#setCollectorRegistry}.
+ *
  * Design principles:
  * - SDK only collects metrics, exposure is decided by the integrating application
  * - Uses Prometheus standard metric types (Counter, Gauge)

@@ -615,7 +615,11 @@ class TglogConnection {
     }
 
     /**
-     * Check if connection is writable.
+     * Check if connection is writable (internal use only).
+     * <p>
+     * Note: For TCP, this checks if the socket is ready for writing via the selector,
+     * not whether the connection can accept data (buffered writes are always accepted
+     * by {@link #send}). This method is intended for internal connection pool management.
      *
      * @return true if ready to send data
      */
