@@ -136,6 +136,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setConnectionTimeout(int connectionTimeout) {
+        if (connectionTimeout <= 0) {
+            throw new IllegalArgumentException("Connection timeout must be positive");
+        }
         this.connectionTimeout = connectionTimeout;
         return this;
     }
@@ -145,6 +148,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setMaxConnectionLifetime(int maxConnectionLifetime) {
+        if (maxConnectionLifetime < 0) {
+            throw new IllegalArgumentException("Max connection lifetime must be non-negative (0 means persistent connection)");
+        }
         this.maxConnectionLifetime = maxConnectionLifetime;
         return this;
     }
@@ -163,6 +169,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setBatchingMaxMessages(int batchingMaxMessages) {
+        if (batchingMaxMessages <= 0) {
+            throw new IllegalArgumentException("Batching max messages must be positive");
+        }
         this.batchingMaxMessages = batchingMaxMessages;
         return this;
     }
@@ -172,6 +181,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setBatchingMaxSize(int batchingMaxSize) {
+        if (batchingMaxSize <= 0) {
+            throw new IllegalArgumentException("Batching max size must be positive");
+        }
         this.batchingMaxSize = batchingMaxSize;
         return this;
     }
@@ -190,6 +202,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setBatchingMaxDelayMs(int batchingMaxDelayMs) {
+        if (batchingMaxDelayMs <= 0) {
+            throw new IllegalArgumentException("Batching max delay must be positive");
+        }
         this.batchingMaxDelayMs = batchingMaxDelayMs;
         return this;
     }
@@ -211,6 +226,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setMaxPendingMessages(int maxPendingMessages) {
+        if (maxPendingMessages <= 0) {
+            throw new IllegalArgumentException("Max pending messages must be positive");
+        }
         this.maxPendingMessages = maxPendingMessages;
         return this;
     }
@@ -247,6 +265,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setSendTimeout(int sendTimeout) {
+        if (sendTimeout <= 0) {
+            throw new IllegalArgumentException("Send timeout must be positive");
+        }
         this.sendTimeout = sendTimeout;
         return this;
     }
@@ -256,6 +277,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setMaxRetries(int maxRetries) {
+        if (maxRetries < 0) {
+            throw new IllegalArgumentException("Max retries must be non-negative");
+        }
         this.maxRetries = maxRetries;
         return this;
     }
