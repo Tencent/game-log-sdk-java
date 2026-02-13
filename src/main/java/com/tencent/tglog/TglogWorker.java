@@ -117,8 +117,8 @@ class TglogWorker implements Runnable {
     private static final long EMERGENCY_SUPPLEMENT_INTERVAL_MS = 5000; // 5 seconds
     private static final long EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS = 2000; // 2 seconds
     private static final long METRICS_UPDATE_INTERVAL_MS = 5000; // 5 seconds
-    private static final int DEFAULT_CONN_CLOSE_DELAY_MS = 30000; // 10 seconds (normal replacement)
-    private static final int ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS = 30000; // 10 seconds (error with buffered data)
+    private static final int DEFAULT_CONN_CLOSE_DELAY_MS = 30000; // 30 seconds (normal replacement)
+    private static final int ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS = 30000; // 30 seconds (error with buffered data)
     private static final int ERROR_CONN_CLOSE_DELAY_NO_DATA_MS = 5000; // 5 seconds (error without buffered data)
 
     // Scheduled executor for delayed connection closing
