@@ -11,10 +11,6 @@ import java.nio.channels.Selector;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -116,15 +112,26 @@ class TglogWorker implements Runnable {
     private static final long EMERGENCY_SUPPLEMENT_INTERVAL_MS = 5000; // 5 seconds
     private static final long EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS = 2000; // 2 seconds
     private static final long METRICS_UPDATE_INTERVAL_MS = 5000; // 5 seconds
+    private static final long PENDING_CLOSE_CHECK_INTERVAL_MS = 1000; // 1 second
     private static final int DEFAULT_CONN_CLOSE_DELAY_MS = 30000; // 30 seconds (normal replacement)
     private static final int ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS = 30000; // 30 seconds (error with buffered data)
     private static final int ERROR_CONN_CLOSE_DELAY_NO_DATA_MS = 5000; // 5 seconds (error without buffered data)
 
-    // Scheduled executor for delayed connection closing
-    private final ScheduledExecutorService closeScheduler;
+    // Pending delayed-close entries (processed in worker thread)
+    private final List<DelayedClose> pendingCloseList;
 
-    // Track pending close tasks so we can cancel them during cleanup
-    private final Map<TglogConnection, ScheduledFuture<?>> pendingCloseTasks;
+    /**
+     * Represents a connection scheduled for delayed close.
+     */
+    private static class DelayedClose {
+        final TglogConnection conn;
+        final long deadline; // System.currentTimeMillis() + delayMs
+
+        DelayedClose(TglogConnection conn, long deadline) {
+            this.conn = conn;
+            this.deadline = deadline;
+        }
+    }
 
     /**
      * Create a new worker.
@@ -151,15 +158,8 @@ class TglogWorker implements Runnable {
         // Initialize batch buffer
         this.currentBatch = new BatchBuffer(config);
 
-        // Initialize close scheduler (one thread per worker for delayed connection closing)
-        this.closeScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "TglogWorker-" + workerId + "-CloseScheduler");
-            t.setDaemon(true);
-            return t;
-        });
-
-        // Initialize pending close tasks map
-        this.pendingCloseTasks = new HashMap<>();
+        // Initialize pending close list (processed in worker thread)
+        this.pendingCloseList = new ArrayList<>();
     }
 
     /**
@@ -382,6 +382,7 @@ class TglogWorker implements Runnable {
         long lastEndpointRecoverTime = System.currentTimeMillis();
         long lastConnectionReplaceTime = System.currentTimeMillis();
         long lastMetricsUpdateTime = System.currentTimeMillis();
+        long lastPendingCloseCheckTime = System.currentTimeMillis();
         lastEmergencySupplementTime = 0; // Allow first supplement immediately
 
         while (state == State.READY) {
@@ -429,6 +430,12 @@ class TglogWorker implements Runnable {
                 if (now - lastEmergencySupplementTime >= EMERGENCY_SUPPLEMENT_INTERVAL_MS) {
                     emergencySupplementConnection();
                     lastEmergencySupplementTime = now;
+                }
+
+                // Process pending delayed closes (every 1s)
+                if (now - lastPendingCloseCheckTime >= PENDING_CLOSE_CHECK_INTERVAL_MS) {
+                    processPendingCloses();
+                    lastPendingCloseCheckTime = now;
                 }
 
                 // Update metrics (every 5s)
@@ -1243,41 +1250,59 @@ class TglogWorker implements Runnable {
      * @param isError true if closing due to error, false for normal replacement
      */
     private void closeConnectionWithDelay(TglogConnection conn, boolean isError) {
-        // Cancel any existing close task for this connection
-        ScheduledFuture<?> existingTask = pendingCloseTasks.remove(conn);
-        if (existingTask != null && !existingTask.isDone()) {
-            existingTask.cancel(false);
-        }
+        // Remove any existing pending close for this connection
+        pendingCloseList.removeIf(dc -> dc.conn == conn);
 
         // Determine delay based on close reason and buffered data
         int delayMs;
         if (isError) {
             if (conn.hasBufferedData()) {
-                delayMs = ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS; // 30 seconds
-                logger.info("Worker {} scheduling error connection close with buffered data in {}ms: {}",
-                        workerId, delayMs, conn.getEndpoint());
+                delayMs = ERROR_CONN_CLOSE_DELAY_WITH_DATA_MS;
             } else {
-                delayMs = ERROR_CONN_CLOSE_DELAY_NO_DATA_MS; // 5 seconds
-                logger.info("Worker {} scheduling error connection close without buffered data in {}ms: {}",
-                        workerId, delayMs, conn.getEndpoint());
+                delayMs = ERROR_CONN_CLOSE_DELAY_NO_DATA_MS;
             }
         } else {
-            delayMs = DEFAULT_CONN_CLOSE_DELAY_MS; // 30 seconds (normal replacement)
-            logger.info("Worker {} scheduling normal connection close in {}ms: {}",
-                    workerId, delayMs, conn.getEndpoint());
+            delayMs = DEFAULT_CONN_CLOSE_DELAY_MS;
         }
 
-        // Schedule delayed close with data rescue
-        ScheduledFuture<?> closeTask = closeScheduler.schedule(() -> {
-            try {
-                // Remove from pending tasks
-                pendingCloseTasks.remove(conn);
+        logger.info("Worker {} scheduling connection close in {}ms: {}",
+                workerId, delayMs, conn.getEndpoint());
+        pendingCloseList.add(new DelayedClose(conn, System.currentTimeMillis() + delayMs));
+    }
 
-                // Try to rescue pending data before closing
-                if (conn.hasBufferedData()) {
+    /**
+     * Close connection with delay (normal replacement).
+     */
+    private void closeConnectionWithDelay(TglogConnection conn) {
+        closeConnectionWithDelay(conn, false);
+    }
+
+    /**
+     * Process pending delayed-close connections whose deadline has passed.
+     * Rescues buffered data to alternative connections before closing.
+     * Called from the worker thread's main event loop.
+     */
+    private void processPendingCloses() {
+        if (pendingCloseList.isEmpty()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        Iterator<DelayedClose> it = pendingCloseList.iterator();
+        while (it.hasNext()) {
+            DelayedClose dc = it.next();
+            if (now < dc.deadline) {
+                continue;
+            }
+
+            it.remove();
+
+            try {
+                // Rescue pending data before closing
+                if (dc.conn.hasBufferedData()) {
                     TglogConnection altConn = getConnection();
-                    if (altConn != null && altConn != conn) {
-                        Queue<ByteBuffer> pending = conn.removePendingData();
+                    if (altConn != null && altConn != dc.conn) {
+                        Queue<ByteBuffer> pending = dc.conn.removePendingData();
                         if (pending != null && !pending.isEmpty()) {
                             if (altConn.writePendingData(pending)) {
                                 int rescuedBytes = 0;
@@ -1286,43 +1311,31 @@ class TglogWorker implements Runnable {
                                 }
                                 metrics.addRescuedMsgBytes(rescuedBytes);
                                 logger.info("Worker {} rescued {} bytes from closing connection {}",
-                                        workerId, rescuedBytes, conn.getEndpoint());
+                                        workerId, rescuedBytes, dc.conn.getEndpoint());
                             } else {
                                 logger.warn("Worker {} failed to rescue data from closing connection {}",
-                                        workerId, conn.getEndpoint());
+                                        workerId, dc.conn.getEndpoint());
                             }
                         }
                     } else {
                         logger.warn("Worker {} no alternative connection to rescue data from {}",
-                                workerId, conn.getEndpoint());
+                                workerId, dc.conn.getEndpoint());
                     }
                 }
 
-                // Now close the connection
-                conn.close();
+                dc.conn.close();
                 metrics.incrementClosedConn(workerId);
-                logger.info("Worker {} closed connection after delay: {}", workerId, conn.getEndpoint());
+                logger.info("Worker {} closed connection after delay: {}", workerId, dc.conn.getEndpoint());
 
             } catch (Exception e) {
                 logger.error("Worker {} error during delayed connection close", workerId, e);
-                // Ensure connection is closed even on error
                 try {
-                    conn.close();
+                    dc.conn.close();
                 } catch (Exception e2) {
                     logger.error("Worker {} error closing connection", workerId, e2);
                 }
             }
-        }, delayMs, TimeUnit.MILLISECONDS);
-
-        // Track the close task
-        pendingCloseTasks.put(conn, closeTask);
-    }
-
-    /**
-     * Close connection with delay (normal replacement).
-     */
-    private void closeConnectionWithDelay(TglogConnection conn) {
-        closeConnectionWithDelay(conn, false);
+        }
     }
 
     /**
@@ -1645,34 +1658,13 @@ class TglogWorker implements Runnable {
         // Drain connection buffers (like C version's tglog_worker_drain_and_stop)
         drainConnectionBuffers();
 
-        // Cancel all pending close tasks and close those connections immediately
-        // (SDK is shutting down, we've already flushed)
-        logger.info("Worker {} cancelling {} pending close tasks and closing connections",
-                workerId, pendingCloseTasks.size());
-        for (Map.Entry<TglogConnection, ScheduledFuture<?>> entry : pendingCloseTasks.entrySet()) {
-            TglogConnection conn = entry.getKey();
-            ScheduledFuture<?> task = entry.getValue();
-
-            // Cancel the scheduled close task
-            if (!task.isDone()) {
-                task.cancel(false);
-            }
-
-            // Close the connection immediately
-            conn.close();
+        // Close all pending delayed-close connections immediately
+        logger.info("Worker {} closing {} pending delayed-close connections",
+                workerId, pendingCloseList.size());
+        for (DelayedClose dc : pendingCloseList) {
+            dc.conn.close();
         }
-        pendingCloseTasks.clear();
-
-        // Shutdown close scheduler
-        closeScheduler.shutdown();
-        try {
-            if (!closeScheduler.awaitTermination(1, TimeUnit.SECONDS)) {
-                closeScheduler.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            closeScheduler.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+        pendingCloseList.clear();
 
         // Close all connections directly (no delay needed, we've already flushed)
         for (TglogConnection conn : connections) {
