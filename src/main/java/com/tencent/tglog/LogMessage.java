@@ -10,15 +10,15 @@ class LogMessage {
     private final TglogCallback callback;
     private final long createTime;
     private int retryCount;
-    private final int payloadSize; // Cache payload size to avoid repeated conversion
+    private final byte[] payloadBytes; // Cache UTF-8 bytes to avoid repeated encoding
 
     public LogMessage(String payload, TglogCallback callback) {
         this.payload = payload;
         this.callback = callback;
         this.createTime = System.currentTimeMillis();
         this.retryCount = 0;
-        // Cache payload size at construction time
-        this.payloadSize = payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        // Cache UTF-8 bytes at construction time, reused by BatchBuffer
+        this.payloadBytes = payload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public String getPayload() {
@@ -46,6 +46,10 @@ class LogMessage {
     }
 
     public int getPayloadSize() {
-        return payloadSize;
+        return payloadBytes.length;
+    }
+
+    public byte[] getPayloadBytes() {
+        return payloadBytes;
     }
 }

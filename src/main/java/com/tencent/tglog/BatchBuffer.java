@@ -1,7 +1,7 @@
 package com.tencent.tglog;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -157,7 +157,7 @@ class BatchBuffer {
         sendBufferCount = 0;
 
         for (LogMessage message : messages) {
-            byte[] data = message.getPayload().getBytes(StandardCharsets.UTF_8);
+            byte[] data = message.getPayloadBytes();
             // Use heap buffer instead of direct buffer to avoid off-heap memory leak
             ByteBuffer buffer = ByteBuffer.allocate(data.length);
             buffer.put(data);
@@ -183,8 +183,7 @@ class BatchBuffer {
         ByteBuffer buffer = ByteBuffer.allocate(currentSize);
 
         for (LogMessage message : messages) {
-            byte[] data = message.getPayload().getBytes(StandardCharsets.UTF_8);
-            buffer.put(data);
+            buffer.put(message.getPayloadBytes());
         }
 
         buffer.flip();
