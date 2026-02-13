@@ -289,6 +289,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setStopTimeout(int stopTimeout) {
+        if (stopTimeout <= 0) {
+            throw new IllegalArgumentException("Stop timeout must be positive");
+        }
         this.stopTimeout = stopTimeout;
         return this;
     }

@@ -671,7 +671,7 @@ class TglogWorker implements Runnable {
     private void processMessages() {
         int processed = 0;
 
-        while (processed < MSG_PER_RUN && state == State.READY) {
+        while (processed < MSG_PER_RUN && (state == State.READY || state == State.CLOSING)) {
             // Check if we're retrying
             if (isRetrying()) {
                 // Check if retry has timed out (exceeded total backoff time)
@@ -1620,8 +1620,15 @@ class TglogWorker implements Runnable {
         logger.info("Worker {} flushing {} remaining messages (queue={}, batch={}, pending={})",
                 workerId, totalRemaining, queueSize, batchSize, pendingSize);
 
-        // Flush remaining messages (without retry)
+        // Flush remaining messages (without retry, with timeout protection)
+        long flushDeadline = System.currentTimeMillis() + config.getStopTimeout();
         while (!messageQueue.isEmpty() || pendingMessage != null) {
+            if (System.currentTimeMillis() >= flushDeadline) {
+                int remaining = messageQueue.size() + (pendingMessage != null ? 1 : 0);
+                logger.warn("Worker {} flush timeout, dropping {} remaining messages", workerId, remaining);
+                break;
+            }
+
             processMessages();
 
             // Send final batch
