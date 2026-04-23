@@ -73,35 +73,53 @@ public class TglogClient implements AutoCloseable {
         }
         this.metrics = new TglogMetrics(registry);
 
-        // Auto-adjust batching max size based on protocol limits
-        int maxRequestSize = config.getMaxRequestSize();
-        if (config.getBatchingMaxSize() > maxRequestSize) {
-            logger.warn("Batching max size ({}) exceeds protocol limit ({}), adjusting to {}",
-                    config.getBatchingMaxSize(), maxRequestSize, maxRequestSize);
-            config.setBatchingMaxSize(maxRequestSize);
+        // From this point on, any failure must unregister metrics to keep
+        // the shared CollectorRegistry clean for retry / recreation.
+        boolean initSucceeded = false;
+        try {
+            // Auto-adjust batching max size based on protocol limits
+            int maxRequestSize = config.getMaxRequestSize();
+            if (config.getBatchingMaxSize() > maxRequestSize) {
+                logger.warn("Batching max size ({}) exceeds protocol limit ({}), adjusting to {}",
+                        config.getBatchingMaxSize(), maxRequestSize, maxRequestSize);
+                config.setBatchingMaxSize(maxRequestSize);
+            }
+
+            // Initialize endpoint manager
+            this.endpointManager = new EndpointManager(
+                    config.getHost(),
+                    config.getPort(),
+                    config
+            );
+
+            // Initialize workers
+            int workerNum = config.getWorkerNum();
+            this.workers = new ArrayList<>(workerNum);
+
+            for (int i = 0; i < workerNum; i++) {
+                TglogWorker worker = new TglogWorker(i, config, metrics);
+                workers.add(worker);
+            }
+
+            // Start the client
+            start();
+
+            logger.info("TglogClient created: {}://{}:{} (workers={})",
+                    config.getProtocol(), config.getHost(), config.getPort(), workerNum);
+
+            initSucceeded = true;
+        } finally {
+            if (!initSucceeded) {
+                // start() already stops any workers/endpointManager it started,
+                // but nothing releases metrics. Do that here so a failed
+                // construction doesn't leak collectors in the shared registry.
+                try {
+                    metrics.unregister();
+                } catch (Exception ex) {
+                    logger.warn("Failed to unregister metrics during construction cleanup", ex);
+                }
+            }
         }
-
-        // Initialize endpoint manager
-        this.endpointManager = new EndpointManager(
-                config.getHost(),
-                config.getPort(),
-                config
-        );
-
-        // Initialize workers
-        int workerNum = config.getWorkerNum();
-        this.workers = new ArrayList<>(workerNum);
-
-        for (int i = 0; i < workerNum; i++) {
-            TglogWorker worker = new TglogWorker(i, config, metrics);
-            workers.add(worker);
-        }
-
-        // Start the client
-        start();
-
-        logger.info("TglogClient created: {}://{}:{} (workers={})",
-                config.getProtocol(), config.getHost(), config.getPort(), workerNum);
     }
 
     /**
@@ -379,6 +397,18 @@ public class TglogClient implements AutoCloseable {
             }
 
             running.set(false);
+
+            // Unregister metrics only after workers have fully stopped.
+            // If a worker thread is still running and calling metrics.xxx.inc(),
+            // unregistering concurrently can leave the Prometheus registry in
+            // an inconsistent state. Do it last so the shared CollectorRegistry
+            // is clean for the next TglogClient instance (config hot-reload,
+            // webapp redeploy, tests, etc.).
+            try {
+                metrics.unregister();
+            } catch (Exception e) {
+                logger.warn("Failed to unregister metrics during close", e);
+            }
 
             logger.info("TglogClient closed");
         }

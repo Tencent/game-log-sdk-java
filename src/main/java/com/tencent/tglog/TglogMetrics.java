@@ -11,10 +11,15 @@ import io.prometheus.client.CollectorRegistry;
  * The metrics are registered with a CollectorRegistry which can be exposed by the
  * application integrating this SDK.
  *
- * <p><b>Note:</b> Only one TglogClient instance per JVM is supported when using the
- * default CollectorRegistry. Creating multiple instances with the same registry will
- * cause metric registration conflicts. If multiple instances are needed, provide a
- * separate CollectorRegistry for each via {@link TglogConfig#setCollectorRegistry}.
+ * <p><b>Lifecycle:</b> Metrics are registered with the provided
+ * {@link CollectorRegistry} in the constructor and unregistered via
+ * {@link #unregister()}. When reusing a single registry across multiple
+ * TglogClient instances in the same JVM (e.g. config hot-reload), the previous
+ * client must complete its {@code close()} (which calls {@code unregister()})
+ * before the new client is created. Overlapping instances on the same registry
+ * will fail with {@code Collector already registered}. If overlap is
+ * unavoidable, give each client its own {@link CollectorRegistry} via
+ * {@link TglogConfig#setCollectorRegistry}.
  *
  * Design principles:
  * - SDK only collects metrics, exposure is decided by the integrating application
@@ -406,6 +411,61 @@ public class TglogMetrics {
         justification = "Registry must be exposed for application to set up Prometheus HTTP endpoint")
     public CollectorRegistry getRegistry() {
         return registry;
+    }
+
+    // ========== Lifecycle ==========
+
+    /**
+     * Unregister all metrics from the CollectorRegistry.
+     *
+     * <p>Must be called after the owning TglogClient has stopped all workers and will
+     * no longer touch any metric. Otherwise a concurrent {@code inc()} call may race
+     * with unregistration and leave the registry in an inconsistent state.
+     *
+     * <p>This method is idempotent - calling it twice is safe (Prometheus'
+     * {@code CollectorRegistry.unregister} silently ignores collectors that are
+     * not registered).
+     *
+     * <p>This is essential when the application may create/destroy multiple
+     * TglogClient instances over the JVM lifetime (e.g. config hot-reload,
+     * servlet container redeploy, test suites). Without unregistration, the
+     * second {@code new TglogClient(...)} will throw
+     * {@code IllegalArgumentException: Collector already registered}.
+     */
+    public void unregister() {
+        // Unregister each collector. Wrap in try/catch so one failure doesn't
+        // prevent the rest from being released.
+        safeUnregister(requestMsgCount);
+        safeUnregister(enqueuedMsgCount);
+        safeUnregister(dequeuedMsgCount);
+        safeUnregister(succeededMsgCount);
+        safeUnregister(failedMsgCount);
+        safeUnregister(timeoutMsgCount);
+        safeUnregister(retryMsgCount);
+        safeUnregister(droppedMsgCount);
+        safeUnregister(openedConnCount);
+        safeUnregister(closedConnCount);
+        safeUnregister(errorConnCount);
+        safeUnregister(eagainErrCount);
+        safeUnregister(addEndpointCount);
+        safeUnregister(removeEndpointCount);
+        safeUnregister(rescuedMsgBytes);
+        safeUnregister(msgQueueSize);
+        safeUnregister(msgQueueCapacity);
+        safeUnregister(endpointCount);
+        safeUnregister(activeConnCount);
+    }
+
+    private void safeUnregister(io.prometheus.client.Collector collector) {
+        if (collector == null) {
+            return;
+        }
+        try {
+            registry.unregister(collector);
+        } catch (Exception e) {
+            // Swallow: unregister is best-effort on shutdown. A failure here
+            // shouldn't block the rest of cleanup.
+        }
     }
 
     // ========== JSON Output ==========
