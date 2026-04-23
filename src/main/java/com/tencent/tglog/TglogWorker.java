@@ -100,7 +100,7 @@ class TglogWorker implements Runnable {
     @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
             value = "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR",
             justification = "Selector is initialized in run() method before any use")
-    private Selector selector;
+    private volatile Selector selector;
 
     // Timers and intervals
     private long lastEmergencySupplementTime = 0;
