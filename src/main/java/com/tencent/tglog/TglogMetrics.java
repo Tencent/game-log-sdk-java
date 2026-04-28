@@ -380,7 +380,7 @@ public class TglogMetrics {
      * @return Success rate (0.0 to 1.0)
      */
     public double getSuccessRate() {
-        long total = getSucceededMsgCount() + getFailedMsgCount();
+        long total = getSucceededMsgCount() + getFailedMsgCount() + getDroppedMsgCount();
         if (total == 0) {
             return 0.0;
         }
@@ -499,7 +499,7 @@ public class TglogMetrics {
         long activeConnCount = getActiveConnCount();
 
         // Calculate derived metrics
-        long total = succeededMsgCount + failedMsgCount;
+        long total = succeededMsgCount + failedMsgCount + getDroppedMsgCount();
         double successRate = total == 0 ? 0.0 : (double) succeededMsgCount / total;
         double queueUtilization = msgQueueCapacity == 0 ? 0.0 : (double) msgQueueSize / msgQueueCapacity;
 
@@ -567,7 +567,7 @@ public class TglogMetrics {
         long activeConnCount = getActiveConnCount();
 
         // Calculate derived metrics
-        long total = succeededMsgCount + failedMsgCount;
+        long total = succeededMsgCount + failedMsgCount + getDroppedMsgCount();
         double successRate = total == 0 ? 0.0 : (double) succeededMsgCount / total;
         double queueUtilization = msgQueueCapacity == 0 ? 0.0 : (double) msgQueueSize / msgQueueCapacity;
 
