@@ -265,12 +265,16 @@ class TglogWorker implements Runnable {
             logger.debug("Worker {} waiting for connections", workerId);
             waitForInitialConnections();
 
-            // Mark as ready
-            state = State.READY;
-            logger.info("Worker {} is ready", workerId);
+            // Mark as ready (only if not already stopping)
+            if (state == State.INIT) {
+                state = State.READY;
+                logger.info("Worker {} is ready", workerId);
 
-            // Main event loop
-            runEventLoop();
+                // Main event loop
+                runEventLoop();
+            } else {
+                logger.info("Worker {} skipping event loop, state={}", workerId, state);
+            }
 
         } catch (Exception e) {
             logger.error("Worker {}{}", workerId, " error", e);
@@ -1525,7 +1529,7 @@ class TglogWorker implements Runnable {
      * Stop the worker.
      */
     public void stop() {
-        if (state == State.READY) {
+        if (state == State.READY || state == State.INIT) {
             state = State.CLOSING;
 
             // Wake up selector

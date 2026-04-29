@@ -150,8 +150,8 @@ public class TglogClient implements AutoCloseable {
                 // Set initial endpoints and start all workers
                 for (TglogWorker worker : workers) {
                     worker.setInitialEndpoints(endpoints);
-                    worker.start();
                     startedWorkers.add(worker);
+                    worker.start();
                 }
 
                 logger.info("TglogClient started with {} endpoints", endpoints.size());
