@@ -1522,6 +1522,13 @@ class TglogWorker implements Runnable {
             }
         }
 
+        // Check pending delayed-close connections for buffered data
+        for (DelayedClose dc : pendingCloseList) {
+            if (dc.conn.getBufferedDataSize() > 0) {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -1571,6 +1578,18 @@ class TglogWorker implements Runnable {
 
                     // Try to flush the connection
                     conn.tryFlush();
+                }
+            }
+
+            // Check pending delayed-close connections
+            for (DelayedClose dc : pendingCloseList) {
+                if (dc.conn.hasBufferedData()) {
+                    allDrained = false;
+                    int bufferedSize = dc.conn.getBufferedDataSize();
+                    logger.debug("Worker {} pending-close connection {} has {} bytes buffered, flushing...",
+                            workerId, dc.conn.getEndpoint(), bufferedSize);
+
+                    dc.conn.tryFlush();
                 }
             }
 
