@@ -157,12 +157,10 @@ class BatchBuffer {
         sendBufferCount = 0;
 
         for (LogMessage message : messages) {
-            byte[] data = message.getPayloadBytes();
-            // Use heap buffer instead of direct buffer to avoid off-heap memory leak
-            ByteBuffer buffer = ByteBuffer.allocate(data.length);
-            buffer.put(data);
-            buffer.flip();
-            sendBuffers[sendBufferCount++] = buffer;
+            // Wrap cached payload bytes directly, avoiding extra allocation and copy.
+            // Safe because: LogMessage.payloadBytes is immutable after construction,
+            // and on retry prepareForSend() calls rewind() to reset position.
+            sendBuffers[sendBufferCount++] = ByteBuffer.wrap(message.getPayloadBytes());
         }
 
         return sendBuffers;
