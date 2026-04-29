@@ -37,11 +37,11 @@
 ### 步骤 2: 发布到 Maven 仓库
 
 ```bash
-# 发布快照版本（版本号带 -SNAPSHOT，如 1.0.0-SNAPSHOT）
+# 发布快照版本（版本号带 -SNAPSHOT，如 1.0.1-SNAPSHOT）
 mvn clean deploy
 
 # 发布正式版本（需要先修改 pom.xml 中的版本号，去掉 -SNAPSHOT）
-# 1. 修改 pom.xml: <version>1.0.0</version>
+# 1. 修改 pom.xml: <version>1.0.1</version>
 # 2. 执行发布
 mvn clean deploy
 ```
@@ -58,7 +58,7 @@ mvn clean deploy
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
@@ -161,8 +161,8 @@ mvn clean package
 ```
 
 2. 将以下文件发给同事：
-   - `target/tglog-java-1.0.0.jar`
-   - `target/tglog-java-1.0.0-sources.jar`
+   - `target/tglog-java-1.0.1.jar`
+   - `target/tglog-java-1.0.1-sources.jar`
    - `pom.xml`
 
 ### 同事的操作：
@@ -170,10 +170,10 @@ mvn clean package
 1. 安装到本地 Maven 仓库：
 ```bash
 mvn install:install-file \
-  -Dfile=tglog-java-1.0.0.jar \
+  -Dfile=tglog-java-1.0.1.jar \
   -DgroupId=com.tencent.tglog \
   -DartifactId=tglog-java \
-  -Dversion=1.0.0 \
+  -Dversion=1.0.1 \
   -Dpackaging=jar \
   -DgeneratePom=true
 ```
@@ -183,7 +183,7 @@ mvn install:install-file \
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 

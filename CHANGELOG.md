@@ -5,6 +5,36 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-04-29
+
+### 问题修复
+
+- **修复 flush/close 时遗漏 pendingCloseList 缓冲数据**：
+  - 优雅关闭时确保 pendingCloseList 中的连接缓冲数据也被正确刷新，防止数据丢失
+
+- **修复 Worker 线程启动初始化失败时的线程泄漏**：
+  - 当 Worker 启动阶段初始化失败时，正确清理已创建的线程资源，防止线程泄漏
+
+- **修复成功率计算未包含 dropped 消息**：
+  - 成功率计算现在将 dropped 消息纳入统计，提供更准确的成功率指标
+
+### 性能优化
+
+- **LockFreeQueue 添加缓存行填充防止伪共享**：
+  - 对 LockFreeQueue 的关键字段添加 cache line padding，避免多核 CPU 上的伪共享问题，提升高并发场景下的队列性能
+
+- **Selector 字段添加 volatile 修饰**：
+  - 确保 selector 的可见性，提高多线程环境下的正确性
+
+- **客户端关闭时注销 Prometheus 指标**：
+  - 客户端关闭时主动注销已注册的 Prometheus 指标，避免指标泄漏
+
+### 代码改进
+
+- 更新代码风格配置
+
+---
+
 ## [1.0.0] - 2026-02-13
 
 这是 TGLog Pure Java Client 的首个正式稳定版本。本实现基于 C 版本，提供了等价的功能，同时采用了 Java 原生的特性和编程习惯。
@@ -430,6 +460,7 @@
 
 ---
 
+[1.0.1]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.1
 [1.0.0]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.0
 [1.0.0-rc.3]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.0-rc.3
 [1.0.0-rc.2]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.0-rc.2
