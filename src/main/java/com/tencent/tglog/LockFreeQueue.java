@@ -14,14 +14,35 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * - Single consumer dequeues messages
  * - Fixed capacity with power-of-2 size for efficient modulo
  * - Uses atomic operations for thread-safety
+ * - Cache line padding prevents false sharing between writeIndex and readIndex
  */
 class LockFreeQueue<T> {
+
+    /**
+     * Padded AtomicLong: each instance occupies its own 64-byte cache line.
+     *
+     * Layout (object header ~16 bytes + value 8 bytes + 6 longs * 8 = 64 bytes):
+     *   [object header 16B][value 8B][p1-p6 48B] = 72B >= 64B, guaranteed isolated.
+     */
+    @SuppressWarnings("unused")
+    private static class PaddedAtomicLong extends AtomicLong {
+        // 6 longs of trailing padding (48 bytes) so that the value field of
+        // AtomicLong (8 bytes) plus the object header (~16 bytes) never shares
+        // a 64-byte cache line with any adjacent field.
+        private long p1, p2, p3, p4, p5, p6;
+
+        PaddedAtomicLong(long initialValue) {
+            super(initialValue);
+        }
+    }
 
     private final int capacity;
     private final int mask;
     private final AtomicReferenceArray<T> buffer;
-    private final AtomicLong writeIndex = new AtomicLong(0);
-    private final AtomicLong readIndex = new AtomicLong(0);
+    // Each index lives on its own cache line to avoid false sharing between
+    // producer threads (writeIndex) and the consumer thread (readIndex).
+    private final PaddedAtomicLong writeIndex = new PaddedAtomicLong(0);
+    private final PaddedAtomicLong readIndex = new PaddedAtomicLong(0);
 
     /**
      * Create a lock-free queue with the specified capacity.
