@@ -125,11 +125,13 @@ class TglogWorker implements Runnable {
      */
     private static class DelayedClose {
         final TglogConnection conn;
-        final long deadline; // System.currentTimeMillis() + delayMs
+        long deadline; // System.currentTimeMillis() + delayMs
+        boolean isError;
 
-        DelayedClose(TglogConnection conn, long deadline) {
+        DelayedClose(TglogConnection conn, long deadline, boolean isError) {
             this.conn = conn;
             this.deadline = deadline;
+            this.isError = isError;
         }
     }
 
@@ -1254,9 +1256,6 @@ class TglogWorker implements Runnable {
      * @param isError true if closing due to error, false for normal replacement
      */
     private void closeConnectionWithDelay(TglogConnection conn, boolean isError) {
-        // Remove any existing pending close for this connection
-        pendingCloseList.removeIf(dc -> dc.conn == conn);
-
         // Determine delay based on close reason and buffered data
         int delayMs;
         if (isError) {
@@ -1269,9 +1268,27 @@ class TglogWorker implements Runnable {
             delayMs = DEFAULT_CONN_CLOSE_DELAY_MS;
         }
 
+        long newDeadline = System.currentTimeMillis() + delayMs;
+
+        // If already scheduled, only shorten the deadline (never extend it)
+        for (DelayedClose dc : pendingCloseList) {
+            if (dc.conn == conn) {
+                if (newDeadline < dc.deadline) {
+                    logger.info("Worker {} shortening connection close deadline from {}ms to {}ms: {}",
+                            workerId, dc.deadline - System.currentTimeMillis(), delayMs, conn.getEndpoint());
+                    dc.deadline = newDeadline;
+                    dc.isError = isError;
+                } else {
+                    logger.debug("Worker {} connection close already scheduled with shorter deadline: {}",
+                            workerId, conn.getEndpoint());
+                }
+                return;
+            }
+        }
+
         logger.info("Worker {} scheduling connection close in {}ms: {}",
                 workerId, delayMs, conn.getEndpoint());
-        pendingCloseList.add(new DelayedClose(conn, System.currentTimeMillis() + delayMs));
+        pendingCloseList.add(new DelayedClose(conn, newDeadline, isError));
     }
 
     /**
