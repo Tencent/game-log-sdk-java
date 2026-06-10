@@ -107,7 +107,7 @@ class TglogWorker implements Runnable {
 
     // Constants
     private static final int MSG_PER_RUN = 3000;
-    private static final long ENDPOINT_RECOVER_INTERVAL_MS = 30000; // 30 seconds
+    private static final long ENDPOINT_RECOVER_INTERVAL_MS = 5000; // 5 seconds
     private static final long CONNECTION_REPLACE_CHECK_INTERVAL_MS = 20000; // 20 seconds
     private static final long EMERGENCY_SUPPLEMENT_INTERVAL_MS = 5000; // 5 seconds
     private static final long EMERGENCY_SUPPLEMENT_MIN_INTERVAL_MS = 2000; // 2 seconds
@@ -419,7 +419,7 @@ class TglogWorker implements Runnable {
                 // Periodic tasks
                 long now = System.currentTimeMillis();
 
-                // Recover unavailable endpoints (every 30s)
+                // Recover unavailable endpoints (every 5s)
                 if (now - lastEndpointRecoverTime >= ENDPOINT_RECOVER_INTERVAL_MS) {
                     recoverUnavailableEndpoints();
                     lastEndpointRecoverTime = now;
@@ -603,8 +603,12 @@ class TglogWorker implements Runnable {
         if (conn.finishConnect()) {
             logger.debug("Connection established: {}", conn.getEndpoint());
         } else {
+            // finishConnect failed: the connection never became established (still in connecting
+            // phase). Do not supplement — supplementConnection() is for replacing a connection
+            // that was already running and broke mid-flight. Retries are handled by the
+            // recoverUnavailableEndpoints() timer with backoff.
             logger.warn("Failed to finish connection: {}", conn.getEndpoint());
-            handleConnectionError(conn);
+            handleConnectionError(conn, false);
         }
     }
 
@@ -653,8 +657,11 @@ class TglogWorker implements Runnable {
 
     /**
      * Handle connection error.
+     *
+     * @param supplement true when the connection was running (should be replaced immediately);
+     *                   false when it never finished connecting (retry handled by recovery timer).
      */
-    private void handleConnectionError(TglogConnection conn) {
+    private void handleConnectionError(TglogConnection conn, boolean supplement) {
         // Remove from both lists
         connections.remove(conn);
         connectingConns.remove(conn);
@@ -673,8 +680,17 @@ class TglogWorker implements Runnable {
         // Update metrics
         metrics.incrementErrorConn(workerId);
 
-        // Try to supplement
-        supplementConnection();
+        // Supplement only when replacing a mid-flight broken connection
+        if (supplement) {
+            supplementConnection();
+        }
+    }
+
+    /**
+     * Handle connection error, supplementing a replacement connection immediately.
+     */
+    private void handleConnectionError(TglogConnection conn) {
+        handleConnectionError(conn, true);
     }
 
     /**
@@ -1399,25 +1415,58 @@ class TglogWorker implements Runnable {
             }
         }
 
-        // Like C version: if all endpoints are at target, randomly select one and force supplement
+        // All endpoints are at or above target. Try to force supplement, but only to available
+        // endpoints that are below a hard cap to prevent unbounded connection accumulation
+        // (e.g. when one server is down and connections keep failing and re-trying).
         if (currentEndpoints.isEmpty()) {
             logger.warn("Worker {} no endpoints available", workerId);
             return false;
         }
 
-        // Randomly select an endpoint
-        int randomIndex = ThreadLocalRandom.current().nextInt(currentEndpoints.size());
-        InetSocketAddress endpoint = currentEndpoints.get(randomIndex);
-        try {
-            TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
-            conn.connect(selector);
-            connectingConns.add(conn);
-            logger.info("Worker {} force supplement connection to {} (exceeds target)", workerId, endpoint);
-            return true;
-        } catch (IOException e) {
-            logger.error("Worker {} failed to force supplement connection for {}", workerId, endpoint, e);
-            return false;
+        int hardCap = connectionsPerEndpoint * 2;
+        int randomStart = ThreadLocalRandom.current().nextInt(currentEndpoints.size());
+        for (int i = 0; i < currentEndpoints.size(); i++) {
+            int idx = (randomStart + i) % currentEndpoints.size();
+            InetSocketAddress endpoint = currentEndpoints.get(idx);
+
+            // Skip unavailable endpoints
+            if (unavailableEndpoints.containsKey(endpoint.toString())) {
+                continue;
+            }
+
+            // Count existing + connecting connections for this endpoint
+            int existing = 0;
+            for (TglogConnection conn : connections) {
+                if (conn.getEndpoint().equals(endpoint)) {
+                    existing++;
+                }
+            }
+            for (TglogConnection conn : connectingConns) {
+                if (conn.getEndpoint().equals(endpoint)) {
+                    existing++;
+                }
+            }
+
+            // Hard cap: never exceed connectionsPerEndpoint * 2
+            if (existing >= hardCap) {
+                continue;
+            }
+
+            try {
+                TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
+                conn.connect(selector);
+                connectingConns.add(conn);
+                logger.info("Worker {} force supplement connection to {} (existing={}, hardCap={})",
+                        workerId, endpoint, existing, hardCap);
+                return true;
+            } catch (IOException e) {
+                logger.error("Worker {} failed to force supplement connection for {}", workerId, endpoint, e);
+                markEndpointUnavailable(endpoint);
+            }
         }
+
+        logger.warn("Worker {} no available endpoint for force supplement (all unavailable or at cap)", workerId);
+        return false;
     }
 
     /**
