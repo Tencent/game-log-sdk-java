@@ -57,7 +57,7 @@ public class TglogConfig {
 
     // ========== Retry Configuration ==========
     private int sendTimeout = 30000;                // ms
-    private int maxRetries = 10;
+    private int maxRetries = 3;
     private int stopTimeout = 3000;                 // ms
 
     // ========== Debug Configuration ==========
