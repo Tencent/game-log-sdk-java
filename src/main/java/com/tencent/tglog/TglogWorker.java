@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -80,6 +81,12 @@ class TglogWorker implements Runnable {
     private final LockFreeQueue<LogMessage> messageQueue;
     private final ConcurrentLinkedQueue<List<InetSocketAddress>> endpointUpdateQueue;
 
+    // Flush requests posted by external threads (e.g. TglogClient.flush()).
+    // The worker thread polls these in its event loop and decides completion by
+    // calling hasPendingWork() from inside the worker thread, so external threads
+    // never touch worker-internal non-thread-safe structures.
+    private final ConcurrentLinkedQueue<CompletableFuture<Boolean>> flushRequestQueue;
+
     // Initial endpoints (set before start, read-only after that)
     private List<InetSocketAddress> initialEndpoints;
 
@@ -149,6 +156,7 @@ class TglogWorker implements Runnable {
         // Initialize lock-free queues
         this.messageQueue = new LockFreeQueue<>(config.getMaxPendingMessages());
         this.endpointUpdateQueue = new ConcurrentLinkedQueue<>();
+        this.flushRequestQueue = new ConcurrentLinkedQueue<>();
 
         // Set queue capacity metric (actual capacity after rounding to power of 2)
         metrics.setMsgQueueCapacity(workerId, messageQueue.capacity());
@@ -191,6 +199,89 @@ class TglogWorker implements Runnable {
         }
 
         logger.debug("Worker {} notified of endpoint update: {} endpoints", workerId, newEndpoints.size());
+    }
+
+    /**
+     * Request a flush from an external thread (e.g. {@link TglogClient#flush(long)}).
+     * <p>
+     * This does NOT block and does NOT inspect worker-internal state on the caller
+     * thread. Instead it enqueues a future that the worker thread completes once it
+     * observes no pending work (via {@link #hasPendingWork()}, called only inside the
+     * worker thread). If the worker is no longer running, the future is completed
+     * immediately so callers never hang.
+     *
+     * @return a future that completes with {@code true} when the worker has drained
+     *         all pending work, or {@code false} if the worker stopped before draining.
+     */
+    public CompletableFuture<Boolean> requestFlush() {
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+
+        // Enqueue first, then re-check state. Ordering matters: if we enqueue
+        // before the worker transitions to CLOSING, the worker's event loop or
+        // its shutdown path (completeFlushRequestsOnStop) will service it. If the
+        // worker has already stopped, there is no loop to service it, so we must
+        // complete it here. We never call hasPendingWork() on this (external)
+        // thread, to avoid touching worker-internal structures cross-thread.
+        flushRequestQueue.offer(future);
+
+        if (state != State.READY && state != State.INIT) {
+            // Worker is closing/closed and may never poll the queue again. Drain
+            // it here ourselves and complete with false: we cannot guarantee a
+            // full flush once the worker is no longer accepting/processing.
+            CompletableFuture<Boolean> pendingReq;
+            while ((pendingReq = flushRequestQueue.poll()) != null) {
+                pendingReq.complete(false);
+            }
+            return future;
+        }
+
+        // Wake up selector if it's blocked so the request is serviced promptly.
+        if (selector != null) {
+            selector.wakeup();
+        }
+        return future;
+    }
+
+    /**
+     * Process pending flush requests (called from the worker thread only).
+     * <p>
+     * For each outstanding request, completes it with {@code true} if there is no
+     * more pending work; otherwise leaves it in the queue to be re-checked on the
+     * next event-loop iteration. This keeps the event loop non-blocking while still
+     * giving callers an accurate, in-thread view of pending work.
+     */
+    private void processFlushRequests() {
+        if (flushRequestQueue.isEmpty()) {
+            return;
+        }
+
+        // Only evaluate hasPendingWork() once per iteration; it is identical for
+        // all waiting requests since they all observe the same worker state.
+        boolean pending = hasPendingWork();
+        if (pending) {
+            return;
+        }
+
+        CompletableFuture<Boolean> future;
+        while ((future = flushRequestQueue.poll()) != null) {
+            future.complete(true);
+        }
+    }
+
+    /**
+     * Fail (complete) all outstanding flush requests on worker shutdown so that
+     * callers blocked in {@link TglogClient#flush(long)} do not hang. Completes each
+     * with {@code true} only if no work remains at this point, otherwise {@code false}.
+     */
+    private void completeFlushRequestsOnStop() {
+        if (flushRequestQueue.isEmpty()) {
+            return;
+        }
+        boolean drained = !hasPendingWork();
+        CompletableFuture<Boolean> future;
+        while ((future = flushRequestQueue.poll()) != null) {
+            future.complete(drained);
+        }
     }
 
     /**
@@ -419,6 +510,10 @@ class TglogWorker implements Runnable {
 
                 // Process messages from queue (up to MSG_PER_RUN)
                 processMessages();
+
+                // Service flush requests after processing messages, so callers
+                // observe the most up-to-date pending state for this iteration.
+                processFlushRequests();
 
                 // Periodic tasks
                 long now = System.currentTimeMillis();
@@ -1605,8 +1700,12 @@ class TglogWorker implements Runnable {
 
     /**
      * Check if worker has pending work (messages in queue, batch, or connection buffers).
+     * <p>
+     * Reads worker-internal, non-thread-safe structures and therefore MUST be called
+     * only from the worker thread (e.g. via {@link #processFlushRequests()} or
+     * {@link #completeFlushRequestsOnStop()} on the worker thread's cleanup path).
      */
-    public boolean hasPendingWork() {
+    private boolean hasPendingWork() {
         // Check message queue
         if (!messageQueue.isEmpty()) {
             return true;
@@ -1849,8 +1948,19 @@ class TglogWorker implements Runnable {
             }
         }
 
+        // Complete any flush requests that were enqueued during shutdown. After
+        // cleanup, completeFlushRequestsOnStop reports whether all work drained.
+        // Done before flipping state to CLOSED so a concurrent requestFlush() that
+        // still sees a non-CLOSED state and enqueues will be handled either here or
+        // by its own post-offer state re-check.
+        completeFlushRequestsOnStop();
+
         state = State.CLOSED;
         logger.info("Worker {} cleanup complete", workerId);
+
+        // A requestFlush() racing with the state flip above may have enqueued after
+        // our drain but before observing CLOSED. Drain once more so nothing hangs.
+        completeFlushRequestsOnStop();
     }
 
     /**

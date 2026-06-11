@@ -7,6 +7,9 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -332,34 +335,52 @@ public class TglogClient implements AutoCloseable {
      *
      * @param timeoutMs Maximum time to wait in milliseconds
      * @return true if all messages were flushed, false if timeout
+     * @deprecated During normal operation you do not need to call {@code flush()};
+     *             messages are batched and sent automatically by worker threads. To
+     *             shut down, just call {@link #close()} — it flushes pending messages
+     *             (bounded by {@link TglogConfig#getStopTimeout()}) before stopping
+     *             workers and releasing resources. This method may be made internal
+     *             in a future release.
      */
+    @Deprecated
     public boolean flush(long timeoutMs) {
-        long startTime = System.currentTimeMillis();
+        // Post a flush request to each worker rather than inspecting worker-internal
+        // state from this (caller) thread. Each worker completes its future from
+        // inside the worker thread once it has drained all pending work, so we never
+        // touch the worker's non-thread-safe structures cross-thread.
+        List<CompletableFuture<Boolean>> futures = new ArrayList<>(workers.size());
+        for (TglogWorker worker : workers) {
+            futures.add(worker.requestFlush());
+        }
 
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            // Check if all workers have no pending work
-            boolean allIdle = true;
-            for (TglogWorker worker : workers) {
-                if (worker.hasPendingWork()) {
-                    allIdle = false;
-                    break;
-                }
-            }
-
-            if (allIdle) {
-                return true;
-            }
-
-            // Wait a bit
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        boolean allDrained = true;
+        for (CompletableFuture<Boolean> future : futures) {
+            long remaining = deadline - System.currentTimeMillis();
             try {
-                Thread.sleep(10);
+                if (remaining <= 0) {
+                    // Out of time budget; only succeed if already completed as drained.
+                    if (!future.isDone() || !Boolean.TRUE.equals(future.getNow(Boolean.FALSE))) {
+                        allDrained = false;
+                    }
+                } else {
+                    Boolean drained = future.get(remaining, TimeUnit.MILLISECONDS);
+                    if (drained == null || !drained) {
+                        allDrained = false;
+                    }
+                }
+            } catch (TimeoutException e) {
+                allDrained = false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return false;
+            } catch (ExecutionException e) {
+                logger.warn("Flush request failed for a worker", e.getCause());
+                allDrained = false;
             }
         }
 
-        return false;
+        return allDrained;
     }
 
     /**
