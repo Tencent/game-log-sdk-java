@@ -560,6 +560,14 @@ class TglogWorker implements Runnable {
                 connectingConns.remove(i);
                 connections.add(conn);
 
+                // Clear unavailable state for this endpoint since a connection
+                // has been successfully established.
+                String addr = conn.getEndpoint().toString();
+                if (unavailableEndpoints.remove(addr) != null) {
+                    endpointRetryCount.remove(addr);
+                    logger.info("Worker {} endpoint recovered: {}", workerId, addr);
+                }
+
                 // Update metrics
                 metrics.incrementOpenedConn(workerId);
 
@@ -1108,6 +1116,11 @@ class TglogWorker implements Runnable {
 
     /**
      * Mark endpoint as unavailable.
+     * <p>
+     * If the endpoint is already marked unavailable, does not reset the timestamp or retry
+     * counter, so that the existing backoff state is preserved. This prevents repeated
+     * failures (e.g. from {@link #supplementConnection()}) from resetting the recovery
+     * backoff and causing overly frequent retry attempts.
      */
     private void markEndpointUnavailable(InetSocketAddress endpoint) {
         String addr = endpoint.toString();
@@ -1126,6 +1139,14 @@ class TglogWorker implements Runnable {
                         workerId, addr);
                 return;
             }
+        }
+
+        // If already marked unavailable, preserve existing backoff state.
+        // Don't reset the timestamp or retryCount, so that recovery backoff
+        // continues from the original failure time.
+        if (unavailableEndpoints.containsKey(addr)) {
+            logger.warn("Worker {} endpoint already marked unavailable: {}", workerId, addr);
+            return;
         }
 
         unavailableEndpoints.put(addr, System.currentTimeMillis());
@@ -1181,9 +1202,11 @@ class TglogWorker implements Runnable {
                     unavailableEndpoints.remove(addr);
                     endpointRetryCount.remove(addr);
                 } else {
-                    // Increment retry count
+                    // Increment retry count and reset timestamp so the next backoff interval
+                    // is measured from this attempt, not from the original failure time.
                     int retries = endpointRetryCount.getOrDefault(addr, 0);
                     endpointRetryCount.put(addr, retries + 1);
+                    unavailableEndpoints.put(addr, now);
                 }
             }
         }
