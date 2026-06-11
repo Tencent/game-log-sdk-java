@@ -8,23 +8,15 @@
 
 ## 一、严重问题 (Critical)
 
-### C1. `processPendingCloses` 中 data rescue 可能导致循环补充
+### C1. UDP send 失败后不立即标记连接错误，异常连接残留在连接池
 
-**位置**: `TglogWorker.java:895-961` (`sendBatchTcp`)
-
-**问题描述**:
-
-在 `sendBatchTcp` 中，当一个连接失败 (`sent < 0`) 后，调用 `handleConnectionError(conn)`，然后尝试下一个连接。但 `TglogConnection.send(ByteBuffer[])` 内部在 flush outputBuffer 时可能已经将部分数据 buffered 到了 outputBuffer，此时 state 变 ERROR，但这些 buffered 数据在 pending close 时会被 rescue 到另一个连接，导致同一批数据被发送两次。
-
----
-
-### C2. `processPendingCloses` 中 data rescue 可能导致循环补充
-
-**位置**: `TglogWorker.java:1324-1378` (`processPendingCloses`)
+**位置**: `TglogWorker.java:966-1011` (`sendBatchUdp`)
 
 **问题描述**:
 
-`processPendingCloses` 中调用 `getConnection()` 来获取 rescue 目标连接，而 `getConnection()` 在 `connections.isEmpty()` 时会触发 `emergencySupplement`。如果系统处于所有后端都不可达的异常状态，这个循环会持续创建连接-失败-创建连接。
+UDP send 失败后，在 `tryCount < maxTries` 时，只换连接重试，不标记原连接为错误。如果原因是真正的错误（非 EAGAIN），这个失败的连接仍留在 `connections` 列表中，可能被后续的 round-robin 选到，导致反复尝试发送到已不可用的连接。
+
+**建议**: `sent < 0` 时应该立即调用 `handleConnectionError(conn)`，类似 TCP 路径。
 
 ---
 
@@ -144,7 +136,6 @@ catch IOException 后直接 break，如果是因为 Thread.interrupt() 导致的
 
 ## 五、修复优先级建议
 
-1. **立即修复 C1**: `processPendingCloses` 中 data rescue 不应依赖 `getConnection()` 的 side effect
-2. **立即修复 C2**: UDP send 失败时立即标记连接错误
-5. **计划修复 H2, H3, M1**: markEndpointUnavailable 检查 connectingConns，backoff 加 jitter
-6. **后续优化 M2-M6**: 逐步改进
+1. **立即修复 C1**: UDP send 失败时立即标记连接错误
+2. **计划修复 H2, H3, M1**: markEndpointUnavailable 检查 connectingConns，backoff 加 jitter
+3. **后续优化 M2-M6**: 逐步改进
