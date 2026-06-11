@@ -541,7 +541,12 @@ class TglogWorker implements Runnable {
                     // OP_READ triggered - check if connection is closed or discard unexpected data
                     handleReadable(conn);
                 } else if (key.isWritable()) {
-                    conn.tryFlush();
+                    // If flush fails, the connection was marked ERROR. Handle it now
+                    // (remove + supplement + mark endpoint) instead of waiting for a
+                    // future send to be routed to this connection and discover -1.
+                    if (!conn.tryFlush()) {
+                        handleConnectionError(conn);
+                    }
                 }
             } catch (Exception e) {
                 logger.error("Error processing key for {}", conn.getEndpoint(), e);

@@ -453,8 +453,14 @@ class TglogConnection {
     /**
      * Try to flush buffered data (called when connection is writable).
      * This is called by the event loop when the connection becomes writable.
+     *
+     * @return true if the flush succeeded (or there was nothing to flush);
+     *         false if an IOException occurred and the connection was marked ERROR.
+     *         Callers in the live event loop should treat false as a connection
+     *         error and run their normal error handling so the bad connection is
+     *         removed/replaced promptly instead of lingering until the next send.
      */
-    public void tryFlush() {
+    public boolean tryFlush() {
         if (!outputBuffer.isEmpty() && state == State.CONNECTED) {
             try {
                 flushOutputBuffer();
@@ -466,8 +472,10 @@ class TglogConnection {
             } catch (IOException e) {
                 logger.error("Failed to flush output buffer", e);
                 state = State.ERROR;
+                return false;
             }
         }
+        return true;
     }
 
     /**
