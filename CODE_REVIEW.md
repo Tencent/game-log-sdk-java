@@ -8,33 +8,7 @@
 
 ## 一、严重问题 (Critical)
 
-### C1. `supplementConnection` 在连接失败后立即补充，导致健康节点连接数不断膨胀
-
-**位置**: `TglogWorker.java:664-694` (`handleConnectionError`) + `TglogWorker.java:1383-1472` (`supplementConnection`)
-
-**问题描述**:
-
-当一个健康节点 A 和异常节点 B 构成双节点集群时，触发路径如下：
-
-1. 节点 B 的连接断开 → `handleConnectionError(conn)` (line 692) → `supplementConnection()` (line 685)
-2. `supplementConnection()` Phase 1 (line 1384-1418): 遍历所有 endpoint，B 已标记 unavailable 被跳过，A 已有 `connectionsPerEndpoint` 个连接 (existing >= target)，跳过
-3. **Phase 2 强制补充** (line 1420-1468): 所有 endpoint 都 >= target，进入 force supplement，随机选一个非 unavailable 的 endpoint（就是 A），创建新连接（hardCap = connectionsPerEndpoint * 2）
-4. 新连接到 A，但 A 的连接数已超过 target
-5. 下次节点 B 的连接又断，重复以上 → **A 的连接数会一直涨到 `connectionsPerEndpoint * 2`**
-
-**更严重的问题**: `markEndpointUnavailable()` (line 1112-1135) 有两个保护条件：
-- `currentEndpoints.size() <= 1`: 单节点时不标记（line 1116）
-- 还有活跃连接时不标记（line 1123-1128）
-
-这意味着如果节点 B 有一个连接还在 `connectingConns` 中（正在尝试连接），另一个连接失败后，B **不会被标记为 unavailable**。此时 `supplementConnection` 的 Phase 2 会随机选到 B（因为它不在 unavailableEndpoints 中），**又去创建连接到异常的 B**，创建又失败，失败又触发 `markEndpointUnavailable`，然后又触发 `supplementConnection`... 这可能导致：
-- 到 B 的连接不断创建-失败-创建-失败
-- A 的连接数可能被撑满到 hardCap
-
-**建议修复**:
-
-`handleConnectionError` 中不应立即补充，应依赖定时器。或者至少，在 `supplementConnection` Phase 2 中排除刚发生错误的 endpoint。
-
----
+### C1. 批量重试时 buffer 数据可能被重复发送到多个连接
 
 ### C2. 批量重试时 buffer 数据可能被重复发送到多个连接
 
@@ -46,7 +20,7 @@
 
 ---
 
-### C3. `processPendingCloses` 中 data rescue 可能导致循环补充
+### C2. `processPendingCloses` 中 data rescue 可能导致循环补充
 
 **位置**: `TglogWorker.java:1324-1378` (`processPendingCloses`)
 
@@ -172,9 +146,8 @@ catch IOException 后直接 break，如果是因为 Thread.interrupt() 导致的
 
 ## 五、修复优先级建议
 
-1. **立即修复 C1**: `handleConnectionError` 中移除 `supplementConnection()` 调用，完全依赖 `recoverUnavailableEndpoints` 定时器（带 backoff）和 `emergencySupplementConnection`（仅当 connections 为空时）
-2. **立即修复 H1**: `supplementConnection` 创建连接失败时，不应重置 endpoint retryCount
-3. **立即修复 C2**: `sendBatchTcp` 切换连接前检查 buffer 状态
-4. **尽快修复 H4**: UDP send 失败时立即标记连接错误
+1. **立即修复 C1**: `sendBatchTcp` 切换连接前检查 buffer 状态
+2. **立即修复 C2**: `processPendingCloses` 中 data rescue 不应依赖 `getConnection()` 的 side effect
+3. **尽快修复 H4**: UDP send 失败时立即标记连接错误
 5. **计划修复 H2, H3, M1**: markEndpointUnavailable 检查 connectingConns，backoff 加 jitter
 6. **后续优化 M2-M6**: 逐步改进
