@@ -1746,10 +1746,10 @@ class TglogWorker implements Runnable {
 
         // Flush remaining messages (without retry, with timeout protection)
         long flushDeadline = System.currentTimeMillis() + config.getStopTimeout();
+        boolean flushTimedOut = false;
         while (!messageQueue.isEmpty() || pendingMessage != null) {
             if (System.currentTimeMillis() >= flushDeadline) {
-                int remaining = messageQueue.size() + (pendingMessage != null ? 1 : 0);
-                logger.warn("Worker {} flush timeout, dropping {} remaining messages", workerId, remaining);
+                flushTimedOut = true;
                 break;
             }
 
@@ -1765,6 +1765,13 @@ class TglogWorker implements Runnable {
         if (!currentBatch.isEmpty()) {
             logger.info("Worker {} sending final batch with {} messages", workerId, currentBatch.size());
             sendBatch(false);
+        }
+
+        // Fail any messages that could not be flushed in time, so their
+        // callbacks/Futures complete instead of hanging. These messages were
+        // accepted by send() and must be reported as failed on shutdown.
+        if (flushTimedOut || !messageQueue.isEmpty() || pendingMessage != null || !currentBatch.isEmpty()) {
+            failRemainingMessages();
         }
 
         // Drain connection buffers (like C version's tglog_worker_drain_and_stop)
@@ -1800,6 +1807,64 @@ class TglogWorker implements Runnable {
 
         state = State.CLOSED;
         logger.info("Worker {} cleanup complete", workerId);
+    }
+
+    /**
+     * Fail all messages that remain undelivered at shutdown.
+     * <p>
+     * Drains {@code currentBatch}, {@code pendingMessage}, and {@code messageQueue},
+     * invoking each message's callback with {@link TglogErrorCode#PRODUCER_CLOSED}
+     * and updating dropped-message metrics. Without this, messages accepted by
+     * {@code send()} would be silently dropped on a cleanup timeout, leaving their
+     * callbacks uninvoked and their CompletableFutures uncompleted.
+     */
+    private void failRemainingMessages() {
+        TglogException exception = new TglogException(TglogErrorCode.PRODUCER_CLOSED);
+        int failed = 0;
+
+        // Batch messages that were built but never sent (e.g. flush timed out).
+        if (!currentBatch.isEmpty()) {
+            failed += currentBatch.size();
+            currentBatch.notifyAllFailed(TglogErrorCode.PRODUCER_CLOSED);
+        }
+
+        // Message held back between batches.
+        if (pendingMessage != null) {
+            failMessage(pendingMessage, exception);
+            pendingMessage = null;
+            failed++;
+        }
+
+        // Anything still queued by producers.
+        LogMessage msg;
+        while ((msg = messageQueue.poll()) != null) {
+            failMessage(msg, exception);
+            failed++;
+        }
+
+        if (failed > 0) {
+            for (int i = 0; i < failed; i++) {
+                metrics.incrementDroppedMsg();
+            }
+            logger.warn("Worker {} failed {} undelivered messages on shutdown", workerId, failed);
+        }
+    }
+
+    /**
+     * Invoke a single message's callback with the given failure, isolating
+     * callback exceptions so one bad callback does not block the rest.
+     */
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+            value = "DE_MIGHT_IGNORE",
+            justification = "Intentionally ignoring callback exceptions to prevent one bad callback from affecting others")
+    private void failMessage(LogMessage message, TglogException exception) {
+        if (message.getCallback() != null) {
+            try {
+                message.getCallback().onCompletion(message.getPayload(), exception);
+            } catch (Exception e) {
+                // Ignore callback exceptions
+            }
+        }
     }
 
 }
