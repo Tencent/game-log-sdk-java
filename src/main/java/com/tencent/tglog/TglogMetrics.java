@@ -1,8 +1,12 @@
 package com.tencent.tglog;
 
+import io.prometheus.client.Collector;
 import io.prometheus.client.Counter;
 import io.prometheus.client.Gauge;
 import io.prometheus.client.CollectorRegistry;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Performance metrics for TGLog client using Prometheus Java Client.
@@ -76,110 +80,123 @@ public class TglogMetrics {
     public TglogMetrics(CollectorRegistry registry) {
         this.registry = registry;
 
-        // Initialize Counter metrics
-        this.requestMsgCount = Counter.build()
-                .name("tglog_request_messages_total")
-                .help("Total number of messages requested to send")
-                .register(registry);
+        // Track collectors as they are registered so that a partial failure
+        // (e.g. "Collector already registered" midway through) can roll back
+        // the ones already added, keeping the shared registry clean. Without
+        // this, a partially-registered metrics instance would leave orphan
+        // collectors that a later TglogClient cannot recover from and cannot
+        // unregister (the failed instance never escapes the constructor).
+        List<Collector> registered = new ArrayList<>();
+        try {
+            // Initialize Counter metrics
+            this.requestMsgCount = register(registered, Counter.build()
+                    .name("tglog_request_messages_total")
+                    .help("Total number of messages requested to send"));
 
-        this.enqueuedMsgCount = Counter.build()
-                .name("tglog_enqueued_messages_total")
-                .help("Total number of messages successfully enqueued")
-                .register(registry);
+            this.enqueuedMsgCount = register(registered, Counter.build()
+                    .name("tglog_enqueued_messages_total")
+                    .help("Total number of messages successfully enqueued"));
 
-        this.dequeuedMsgCount = Counter.build()
-                .name("tglog_dequeued_messages_total")
-                .help("Total number of messages successfully dequeued")
-                .register(registry);
+            this.dequeuedMsgCount = register(registered, Counter.build()
+                    .name("tglog_dequeued_messages_total")
+                    .help("Total number of messages successfully dequeued"));
 
-        this.succeededMsgCount = Counter.build()
-                .name("tglog_succeeded_messages_total")
-                .help("Total number of messages successfully sent")
-                .register(registry);
+            this.succeededMsgCount = register(registered, Counter.build()
+                    .name("tglog_succeeded_messages_total")
+                    .help("Total number of messages successfully sent"));
 
-        this.failedMsgCount = Counter.build()
-                .name("tglog_failed_messages_total")
-                .help("Total number of messages failed to send")
-                .register(registry);
+            this.failedMsgCount = register(registered, Counter.build()
+                    .name("tglog_failed_messages_total")
+                    .help("Total number of messages failed to send"));
 
-        this.timeoutMsgCount = Counter.build()
-                .name("tglog_timeout_messages_total")
-                .help("Total number of messages timed out")
-                .register(registry);
+            this.timeoutMsgCount = register(registered, Counter.build()
+                    .name("tglog_timeout_messages_total")
+                    .help("Total number of messages timed out"));
 
-        this.retryMsgCount = Counter.build()
-                .name("tglog_retry_messages_total")
-                .help("Total number of message retries")
-                .register(registry);
+            this.retryMsgCount = register(registered, Counter.build()
+                    .name("tglog_retry_messages_total")
+                    .help("Total number of message retries"));
 
-        this.droppedMsgCount = Counter.build()
-                .name("tglog_dropped_messages_total")
-                .help("Total number of messages dropped (queue full)")
-                .register(registry);
+            this.droppedMsgCount = register(registered, Counter.build()
+                    .name("tglog_dropped_messages_total")
+                    .help("Total number of messages dropped (queue full)"));
 
-        this.openedConnCount = Counter.build()
-                .name("tglog_opened_connections_total")
-                .help("Total number of connections opened")
-                .labelNames("worker_id")
-                .register(registry);
+            this.openedConnCount = register(registered, Counter.build()
+                    .name("tglog_opened_connections_total")
+                    .help("Total number of connections opened")
+                    .labelNames("worker_id"));
 
-        this.closedConnCount = Counter.build()
-                .name("tglog_closed_connections_total")
-                .help("Total number of connections closed")
-                .labelNames("worker_id")
-                .register(registry);
+            this.closedConnCount = register(registered, Counter.build()
+                    .name("tglog_closed_connections_total")
+                    .help("Total number of connections closed")
+                    .labelNames("worker_id"));
 
-        this.errorConnCount = Counter.build()
-                .name("tglog_error_connections_total")
-                .help("Total number of connection errors")
-                .labelNames("worker_id")
-                .register(registry);
+            this.errorConnCount = register(registered, Counter.build()
+                    .name("tglog_error_connections_total")
+                    .help("Total number of connection errors")
+                    .labelNames("worker_id"));
 
-        this.eagainErrCount = Counter.build()
-                .name("tglog_eagain_errors_total")
-                .help("Total number of EAGAIN errors (socket buffer full)")
-                .labelNames("worker_id")
-                .register(registry);
+            this.eagainErrCount = register(registered, Counter.build()
+                    .name("tglog_eagain_errors_total")
+                    .help("Total number of EAGAIN errors (socket buffer full)")
+                    .labelNames("worker_id"));
 
-        this.addEndpointCount = Counter.build()
-                .name("tglog_add_endpoints_total")
-                .help("Total number of endpoints added")
-                .register(registry);
+            this.addEndpointCount = register(registered, Counter.build()
+                    .name("tglog_add_endpoints_total")
+                    .help("Total number of endpoints added"));
 
-        this.removeEndpointCount = Counter.build()
-                .name("tglog_remove_endpoints_total")
-                .help("Total number of endpoints removed")
-                .register(registry);
+            this.removeEndpointCount = register(registered, Counter.build()
+                    .name("tglog_remove_endpoints_total")
+                    .help("Total number of endpoints removed"));
 
-        this.rescuedMsgBytes = Counter.build()
-                .name("tglog_rescued_message_bytes_total")
-                .help("Total bytes of rescued messages")
-                .register(registry);
+            this.rescuedMsgBytes = register(registered, Counter.build()
+                    .name("tglog_rescued_message_bytes_total")
+                    .help("Total bytes of rescued messages"));
 
-        // Initialize Gauge metrics
-        // Queue size and connection count have worker_id label for per-worker monitoring
-        this.msgQueueSize = Gauge.build()
-                .name("tglog_message_queue_size")
-                .help("Current size of the message queue")
-                .labelNames("worker_id")
-                .register(registry);
+            // Initialize Gauge metrics
+            // Queue size and connection count have worker_id label for per-worker monitoring
+            this.msgQueueSize = register(registered, Gauge.build()
+                    .name("tglog_message_queue_size")
+                    .help("Current size of the message queue")
+                    .labelNames("worker_id"));
 
-        this.msgQueueCapacity = Gauge.build()
-                .name("tglog_message_queue_capacity")
-                .help("Capacity of the message queue")
-                .labelNames("worker_id")
-                .register(registry);
+            this.msgQueueCapacity = register(registered, Gauge.build()
+                    .name("tglog_message_queue_capacity")
+                    .help("Capacity of the message queue")
+                    .labelNames("worker_id"));
 
-        this.endpointCount = Gauge.build()
-                .name("tglog_endpoints")
-                .help("Current number of endpoints")
-                .register(registry);
+            this.endpointCount = register(registered, Gauge.build()
+                    .name("tglog_endpoints")
+                    .help("Current number of endpoints"));
 
-        this.activeConnCount = Gauge.build()
-                .name("tglog_active_connections")
-                .help("Current number of active connections")
-                .labelNames("worker_id")
-                .register(registry);
+            this.activeConnCount = register(registered, Gauge.build()
+                    .name("tglog_active_connections")
+                    .help("Current number of active connections")
+                    .labelNames("worker_id"));
+        } catch (RuntimeException e) {
+            // Roll back collectors registered before the failure so the shared
+            // registry is left clean and a subsequent construction can succeed.
+            for (Collector c : registered) {
+                safeUnregister(c);
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Register a collector and track it for rollback on partial construction failure.
+     *
+     * @param registered list accumulating successfully registered collectors
+     * @param builder     the Prometheus collector builder
+     * @param <T>         collector type
+     * @return the registered collector
+     */
+    private <T extends io.prometheus.client.SimpleCollector<?>> T register(
+            List<Collector> registered,
+            io.prometheus.client.SimpleCollector.Builder<?, T> builder) {
+        T collector = builder.register(registry);
+        registered.add(collector);
+        return collector;
     }
 
     // ========== Counter Increments ==========
