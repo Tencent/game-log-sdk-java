@@ -160,6 +160,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setDnsUpdateInterval(int dnsUpdateInterval) {
+        if (dnsUpdateInterval <= 0) {
+            throw new IllegalArgumentException("DNS update interval must be positive");
+        }
         this.dnsUpdateInterval = dnsUpdateInterval;
         return this;
     }

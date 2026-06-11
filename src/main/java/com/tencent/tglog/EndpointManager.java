@@ -45,10 +45,16 @@ class EndpointManager {
 
     /**
      * Start periodic DNS updates.
+     *
+     * @throws UnknownHostException if the initial DNS resolution fails; the real
+     *         cause is propagated so the caller can surface it instead of a generic
+     *         "no endpoints" error.
      */
-    public void start() {
-        // Initial resolution
-        updateEndpoints();
+    public void start() throws UnknownHostException {
+        // Initial resolution - failures must propagate so startup reports the real cause.
+        List<InetSocketAddress> initial = resolveHost();
+        currentEndpoints = initial;
+        logger.info("Initial DNS resolution for {} -> {} endpoint(s)", host, initial.size());
 
         // Schedule periodic updates
         int intervalSeconds = config.getDnsUpdateInterval();
