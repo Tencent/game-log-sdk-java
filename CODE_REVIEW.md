@@ -8,9 +8,7 @@
 
 ## 一、严重问题 (Critical)
 
-### C1. 批量重试时 buffer 数据可能被重复发送到多个连接
-
-### C2. 批量重试时 buffer 数据可能被重复发送到多个连接
+### C1. `processPendingCloses` 中 data rescue 可能导致循环补充
 
 **位置**: `TglogWorker.java:895-961` (`sendBatchTcp`)
 
@@ -60,7 +58,7 @@
 
 `getConnection()` 的 emergency supplement 有 2 秒最小间隔限制。但 `processPendingCloses` 每 1 秒执行一次。如果 connections 为空，data rescue 可能因 2 秒间隔未到而延迟。
 
-### H4. `sendBatchUdp` 不在每次失败时标记连接错误
+### C2. `sendBatchUdp` 不在每次失败时标记连接错误
 
 **位置**: `TglogWorker.java:966-1011`
 
@@ -146,8 +144,7 @@ catch IOException 后直接 break，如果是因为 Thread.interrupt() 导致的
 
 ## 五、修复优先级建议
 
-1. **立即修复 C1**: `sendBatchTcp` 切换连接前检查 buffer 状态
-2. **立即修复 C2**: `processPendingCloses` 中 data rescue 不应依赖 `getConnection()` 的 side effect
-3. **尽快修复 H4**: UDP send 失败时立即标记连接错误
+1. **立即修复 C1**: `processPendingCloses` 中 data rescue 不应依赖 `getConnection()` 的 side effect
+2. **立即修复 C2**: UDP send 失败时立即标记连接错误
 5. **计划修复 H2, H3, M1**: markEndpointUnavailable 检查 connectingConns，backoff 加 jitter
 6. **后续优化 M2-M6**: 逐步改进
