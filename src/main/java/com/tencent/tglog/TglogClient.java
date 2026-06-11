@@ -330,19 +330,22 @@ public class TglogClient implements AutoCloseable {
 
 
     /**
-     * Flush all pending messages.
-     * Waits for all messages in queues, batches, and connection buffers to be sent.
+     * Flush all pending messages, waiting up to {@code timeoutMs} for every worker
+     * to drain its queues, batches, and connection output buffers.
+     * <p>
+     * During normal operation you usually do not need to call this; messages are
+     * batched and sent automatically by worker threads, and {@link #close()} already
+     * flushes pending messages (bounded by {@link TglogConfig#getStopTimeout()})
+     * before stopping workers. It is provided for cases where you want to confirm
+     * pending data has been sent without closing the client.
+     * <p>
+     * This is non-blocking on the caller side beyond the wait: it posts a flush
+     * request to each worker and waits on the returned futures, so it never touches
+     * worker-internal state from the calling thread.
      *
      * @param timeoutMs Maximum time to wait in milliseconds
-     * @return true if all messages were flushed, false if timeout
-     * @deprecated During normal operation you do not need to call {@code flush()};
-     *             messages are batched and sent automatically by worker threads. To
-     *             shut down, just call {@link #close()} — it flushes pending messages
-     *             (bounded by {@link TglogConfig#getStopTimeout()}) before stopping
-     *             workers and releasing resources. This method may be made internal
-     *             in a future release.
+     * @return true if all messages were flushed, false if the timeout elapsed first
      */
-    @Deprecated
     public boolean flush(long timeoutMs) {
         // Post a flush request to each worker rather than inspecting worker-internal
         // state from this (caller) thread. Each worker completes its future from
