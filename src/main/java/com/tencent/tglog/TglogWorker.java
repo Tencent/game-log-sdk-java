@@ -982,21 +982,16 @@ class TglogWorker implements Runnable {
             return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
         }
 
-        try {
-            // Prepare buffers
-            ByteBuffer[] buffers = currentBatch.prepareForSend();
+        // Prepare buffers
+        ByteBuffer[] buffers = currentBatch.prepareForSend();
 
-            // Send based on protocol
-            if (config.getProtocol() == TglogConfig.Protocol.TCP) {
-                return sendBatchTcp(conn, buffers);
-            } else {
-                return sendBatchUdp(conn, buffers);
-            }
-
-        } catch (IOException e) {
-            logger.error("Worker {}{}", workerId, " send error", e);
-            handleConnectionError(conn);
-            return SendResult.error(TglogErrorCode.SEND_FAILED);
+        // Send based on protocol. Both senders handle connection errors (including
+        // IOException thrown mid-write) internally by switching connections, so no
+        // outer catch is needed here.
+        if (config.getProtocol() == TglogConfig.Protocol.TCP) {
+            return sendBatchTcp(conn, buffers);
+        } else {
+            return sendBatchUdp(conn, buffers);
         }
     }
 
@@ -1007,7 +1002,7 @@ class TglogWorker implements Runnable {
      * - sent < 0: connection error, mark connection as failed and try next
      * - sent > 0: success or partial send (buffered)
      */
-    private SendResult sendBatchTcp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
+    private SendResult sendBatchTcp(TglogConnection conn, ByteBuffer[] buffers) {
         int tryCount = 0;
         long totalSize = 0;
         for (ByteBuffer buf : buffers) {
@@ -1015,7 +1010,28 @@ class TglogWorker implements Runnable {
         }
 
         while (tryCount < connections.size()) {
-            long sent = conn.send(buffers);
+            long sent;
+            try {
+                sent = conn.send(buffers);
+            } catch (IOException e) {
+                // A connection that fails mid-write (RST/EPIPE/etc.) throws instead of
+                // returning -1. Treat it the same as sent < 0: drop this connection and
+                // try the next one, so a single bad connection does not fail the batch.
+                logger.error("Worker {} TCP send error on connection {}, trying next connection",
+                        workerId, conn.getEndpoint(), e);
+                handleConnectionError(conn);
+                tryCount++;
+
+                if (tryCount < connections.size()) {
+                    conn = getConnection();
+                    if (conn == null) {
+                        return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
+                    }
+                    continue;
+                }
+
+                return SendResult.error(TglogErrorCode.SEND_FAILED);
+            }
 
             // Connection error - mark as failed and try another connection
             if (sent < 0) {
@@ -1078,7 +1094,7 @@ class TglogWorker implements Runnable {
     /**
      * Send batch via UDP.
      */
-    private SendResult sendBatchUdp(TglogConnection conn, ByteBuffer[] buffers) throws IOException {
+    private SendResult sendBatchUdp(TglogConnection conn, ByteBuffer[] buffers) {
         // UDP sends first buffer only
         ByteBuffer buffer = buffers[0];
         // int totalSize = buffer.remaining(); // Unused, but kept for potential future logging
@@ -1086,7 +1102,25 @@ class TglogWorker implements Runnable {
         int tryCount = 0;
 
         while (tryCount < maxTries) {
-            int sent = conn.send(buffer);
+            int sent;
+            try {
+                sent = conn.send(buffer);
+            } catch (IOException e) {
+                // A connection that fails mid-write throws instead of returning -1.
+                // Treat it the same as sent < 0: drop this connection and try the next.
+                logger.error("Worker {} UDP send error on connection {}, trying next connection",
+                        workerId, conn.getEndpoint(), e);
+                handleConnectionError(conn);
+                tryCount++;
+                if (tryCount < maxTries) {
+                    conn = getConnection();
+                    if (conn == null) {
+                        return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
+                    }
+                    continue;
+                }
+                return SendResult.error(TglogErrorCode.SEND_FAILED);
+            }
 
             if (sent < 0) {
                 // EAGAIN or error - try another connection
