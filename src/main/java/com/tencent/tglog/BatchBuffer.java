@@ -5,6 +5,9 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Batch buffer for accumulating log messages before sending.
  *
@@ -14,6 +17,8 @@ import java.util.List;
  * - Tracks message callbacks for result notification
  */
 class BatchBuffer {
+
+    private static final Logger logger = LoggerFactory.getLogger(BatchBuffer.class);
 
     private final TglogConfig config;
     private final int maxMessages;
@@ -240,8 +245,10 @@ class BatchBuffer {
             if (message.getCallback() != null) {
                 try {
                     message.getCallback().onCompletion(message.getPayload(), null);
-                } catch (Exception e) {
-                    // Ignore callback exceptions
+                } catch (Throwable t) {
+                    // Isolate user callback failures (including Error) so one bad
+                    // callback cannot break the notification loop or the worker thread
+                    logger.warn("Exception/Error in user callback, ignored", t);
                 }
             }
             currentSize -= message.getPayloadSize();
@@ -286,8 +293,10 @@ class BatchBuffer {
             if (message.getCallback() != null) {
                 try {
                     message.getCallback().onCompletion(message.getPayload(), exception);
-                } catch (Exception e) {
-                    // Ignore callback exceptions
+                } catch (Throwable t) {
+                    // Isolate user callback failures (including Error) so one bad
+                    // callback cannot break the notification loop or the worker thread
+                    logger.warn("Exception/Error in user callback, ignored", t);
                 }
             }
         }

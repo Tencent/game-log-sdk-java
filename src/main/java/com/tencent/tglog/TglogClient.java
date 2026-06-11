@@ -220,20 +220,22 @@ public class TglogClient implements AutoCloseable {
 
         // Wrap user callback to also complete the future
         TglogCallback wrappedCallback = (payload, exception) -> {
-            // Call user callback if provided
-            if (callback != null) {
-                try {
+            // Call user callback if provided. Catch Throwable (not just Exception) so a
+            // user callback throwing an Error cannot escape and skip future completion.
+            try {
+                if (callback != null) {
                     callback.onCompletion(payload, exception);
-                } catch (Exception e) {
-                    logger.warn("Exception in user callback", e);
                 }
-            }
-
-            // Complete the future
-            if (exception == null) {
-                future.complete(null);
-            } else {
-                future.completeExceptionally(exception);
+            } catch (Throwable t) {
+                logger.warn("Exception/Error in user callback", t);
+            } finally {
+                // Always complete the future, even if the user callback threw,
+                // so callers blocking on the CompletableFuture never hang.
+                if (exception == null) {
+                    future.complete(null);
+                } else {
+                    future.completeExceptionally(exception);
+                }
             }
         };
 
