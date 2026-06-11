@@ -382,29 +382,37 @@ public class TglogClient implements AutoCloseable {
                 worker.stop();
             }
 
-            // Wait for workers to stop
+            // Wait for workers to stop by joining their threads. Joining (rather
+            // than polling isStopped()) guarantees the worker's cleanup() has
+            // fully finished before we unregister metrics below, removing the
+            // race where a still-running worker touches metrics concurrently
+            // with unregistration.
             long deadline = System.currentTimeMillis() + config.getStopTimeout();
+            boolean allStopped = true;
             for (TglogWorker worker : workers) {
                 long remaining = deadline - System.currentTimeMillis();
-                if (remaining > 0) {
-                    while (!worker.isStopped() && System.currentTimeMillis() < deadline) {
-                        try {
-                            Thread.sleep(10);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
+                // Always give a worker at least a small window to terminate so a
+                // late worker isn't skipped just because earlier ones used up the
+                // budget; use 1ms as the floor (0 would mean "wait forever").
+                long joinTimeout = remaining > 0 ? remaining : 1;
+                if (!worker.join(joinTimeout)) {
+                    allStopped = false;
                 }
+            }
+            if (!allStopped) {
+                logger.warn("One or more workers did not stop within {}ms; proceeding with "
+                        + "metrics unregistration anyway to keep the registry rebuildable",
+                        config.getStopTimeout());
             }
 
             running.set(false);
 
-            // Unregister metrics only after workers have fully stopped.
-            // If a worker thread is still running and calling metrics.xxx.inc(),
-            // unregistering concurrently can leave the Prometheus registry in
-            // an inconsistent state. Do it last so the shared CollectorRegistry
-            // is clean for the next TglogClient instance (config hot-reload,
+            // Unregister metrics. Normally all workers have fully stopped by now
+            // (joined above), so there is no concurrent access. Even if a worker
+            // overran the stop timeout, we still unregister: leaving collectors
+            // registered would permanently leak them and break the next
+            // TglogClient construction on a shared registry. Doing it last keeps
+            // the shared CollectorRegistry clean for reuse (config hot-reload,
             // webapp redeploy, tests, etc.).
             try {
                 metrics.unregister();

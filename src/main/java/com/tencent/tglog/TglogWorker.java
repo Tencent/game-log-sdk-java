@@ -67,6 +67,9 @@ class TglogWorker implements Runnable {
 
     // State management
     private volatile State state = State.INIT;
+    // Reference to the worker thread, kept so that close() can join() it and
+    // confirm cleanup has fully finished before unregistering shared metrics.
+    private volatile Thread workerThread;
     private final Object readyLock = new Object();
     private final AtomicInteger readyConnCount = new AtomicInteger(0);
     private final AtomicInteger failedConnCount = new AtomicInteger(0);
@@ -196,9 +199,10 @@ class TglogWorker implements Runnable {
     public void start() {
         logger.info("Worker {} starting thread, initialEndpoints={}", workerId, (initialEndpoints == null ? "null" : initialEndpoints.size()));
 
-        Thread workerThread = new Thread(this, "TglogWorker-" + workerId);
-        workerThread.setDaemon(false);
-        workerThread.start();
+        Thread thread = new Thread(this, "TglogWorker-" + workerId);
+        thread.setDaemon(false);
+        this.workerThread = thread;
+        thread.start();
 
         logger.debug("Worker {} thread started, waiting for ready...", workerId);
 
@@ -1649,6 +1653,32 @@ class TglogWorker implements Runnable {
      */
     public boolean isStopped() {
         return state == State.CLOSED;
+    }
+
+    /**
+     * Wait for the worker thread to terminate, up to the given timeout.
+     * <p>
+     * Joining the actual thread (rather than polling {@link #isStopped()}) lets
+     * the caller confirm that {@code cleanup()} has fully finished before it
+     * touches shared resources such as the Prometheus registry, eliminating the
+     * race where metrics are unregistered while the worker is still running.
+     *
+     * @param timeoutMs maximum time to wait in milliseconds (0 means wait forever)
+     * @return true if the worker thread has terminated, false if it is still running
+     */
+    public boolean join(long timeoutMs) {
+        Thread thread = this.workerThread;
+        if (thread == null) {
+            // Never started, or already finished and reference cleared.
+            return isStopped();
+        }
+        try {
+            thread.join(timeoutMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return !thread.isAlive();
+        }
+        return !thread.isAlive();
     }
 
     /**
