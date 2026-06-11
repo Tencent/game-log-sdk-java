@@ -392,8 +392,17 @@ public class TglogClient implements AutoCloseable {
         if (closed.compareAndSet(false, true)) {
             logger.info("Closing TglogClient...");
 
-            // Try to flush pending messages
-            flush(config.getStopTimeout());
+            // Try to flush pending messages. A false result means some workers
+            // still had undelivered data when the flush budget ran out; we still
+            // proceed to close (AutoCloseable must release resources), but log it
+            // so the timeout is observable. Per-message visibility is already
+            // provided by cleanup()'s failRemainingMessages() (PRODUCER_CLOSED
+            // callbacks + dropped metrics); this WARN is the aggregate signal.
+            if (!flush(config.getStopTimeout())) {
+                logger.warn("flush() did not drain all pending messages within {}ms during close; "
+                        + "remaining messages will be failed with PRODUCER_CLOSED during worker cleanup",
+                        config.getStopTimeout());
+            }
 
             // Stop endpoint manager
             endpointManager.stop();
