@@ -487,6 +487,13 @@ class TglogWorker implements Runnable {
         Set<InetSocketAddress> added = new HashSet<>(newSet);
         added.removeAll(oldSet);
 
+        // Update the endpoint view BEFORE adding/removing connections. markEndpointUnavailable()
+        // consults currentEndpoints.size() to decide whether backoff applies, so it must already
+        // reflect the new topology; otherwise a newly added but unreachable endpoint could be seen
+        // against the old (smaller) endpoint list and wrongly skipped from being marked unavailable.
+        currentEndpoints = new ArrayList<>(newEndpoints);
+        metrics.setEndpointCount(currentEndpoints.size());
+
         // Add connections for new endpoints first (to ensure availability)
         for (InetSocketAddress endpoint : added) {
             addConnectionsForEndpoint(endpoint);
@@ -500,10 +507,6 @@ class TglogWorker implements Runnable {
             endpointRetryCount.remove(endpoint.toString());
             metrics.incrementRemoveEndpoint();
         }
-
-        // Update current endpoints
-        currentEndpoints = new ArrayList<>(newEndpoints);
-        metrics.setEndpointCount(currentEndpoints.size());
 
         logger.info("Worker {} endpoint update complete: added={}, removed={}, total={}", workerId, added.size(), removed.size(), currentEndpoints.size());
     }
