@@ -1197,16 +1197,22 @@ class TglogWorker implements Runnable {
                     }
                 }
 
-                if (successfulConns > 0) {
-                    // Remove from unavailable (will be re-added if connections fail)
-                    unavailableEndpoints.remove(addr);
-                    endpointRetryCount.remove(addr);
-                } else {
-                    // Increment retry count and reset timestamp so the next backoff interval
-                    // is measured from this attempt, not from the original failure time.
-                    int retries = endpointRetryCount.getOrDefault(addr, 0);
-                    endpointRetryCount.put(addr, retries + 1);
-                    unavailableEndpoints.put(addr, now);
+                // A successful conn.connect() for non-blocking TCP only *initiates*
+                // the handshake; the connection is not actually established until
+                // finishConnect() succeeds. So we must NOT clear the unavailable/backoff
+                // state here, otherwise a host that accepts the connect attempt but then
+                // fails finishConnect() would reset its retry count to 0 every cycle,
+                // degrading exponential backoff into fixed-interval retries.
+                //
+                // The unavailable/retry state is cleared in checkConnectingConnections()
+                // only once the connection reaches CONNECTED. Here we just advance the
+                // backoff so we don't re-attempt before the next interval elapses.
+                int retries = endpointRetryCount.getOrDefault(addr, 0);
+                endpointRetryCount.put(addr, retries + 1);
+                unavailableEndpoints.put(addr, now);
+
+                if (successfulConns == 0) {
+                    logger.warn("Worker {} failed to initiate any recovery connection for {}", workerId, addr);
                 }
             }
         }
