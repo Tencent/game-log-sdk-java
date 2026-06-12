@@ -809,12 +809,31 @@ class TglogWorker implements Runnable {
     }
 
     /**
-     * Process messages from queue.
+     * Process messages from queue (normal event-loop mode, with retry/backoff).
      */
     private void processMessages() {
+        processMessages(false);
+    }
+
+    /**
+     * Process messages from queue.
+     *
+     * @param shutdown when true the worker is draining during {@link #cleanup()}:
+     *                 the batch is sent immediately without honoring retry backoff,
+     *                 and a failed send fails the batch instead of re-arming a retry.
+     *                 This guarantees forward progress on every call so the cleanup
+     *                 drain loop cannot busy-spin until {@code stopTimeout} elapses
+     *                 (it otherwise would, because a batch stuck in backoff makes
+     *                 processMessages() return without consuming the queue).
+     */
+    private void processMessages(boolean shutdown) {
         int processed = 0;
 
         while (processed < MSG_PER_RUN && (state == State.READY || state == State.CLOSING)) {
+            // sendBatch(retry) selector: during shutdown we never re-enter the
+            // retry/backoff state, we attempt one send and accept its outcome.
+            boolean retry = !shutdown;
+
             // Check if we're retrying
             if (isRetrying()) {
                 // Check if retry has timed out (exceeded total backoff time)
@@ -822,11 +841,13 @@ class TglogWorker implements Runnable {
                     logger.warn("Worker {} batch retry/send timeout", workerId);
                     failCurrentBatch(TglogErrorCode.SEND_TIMEOUT);
                     // Continue to process new messages
-                } else if (currentBatch.shouldRetryNow(Backoff.BATCH_RETRY)) {
-                    // Time to retry - attempt to send the batch again
+                } else if (shutdown || currentBatch.shouldRetryNow(Backoff.BATCH_RETRY)) {
+                    // Time to retry - attempt to send the batch again.
+                    // During shutdown we ignore the backoff window and retry now so
+                    // the drain loop can finish fast instead of waiting out backoff.
                     logger.debug("Worker {} attempting retry {}/{}",
                             workerId, currentBatch.getRetryCount(), config.getMaxRetries());
-                    if (!sendBatch(true)) {
+                    if (!sendBatch(retry)) {
                         break; // Still retrying (will check again in next iteration)
                     }
 
@@ -845,7 +866,7 @@ class TglogWorker implements Runnable {
 
             // Send current batch if ready
             if (canSendBatch()) {
-                if (!sendBatch(true)) {
+                if (!sendBatch(retry)) {
                     break; // Batch is retrying
                 }
             }
@@ -870,7 +891,7 @@ class TglogWorker implements Runnable {
             if (batchSize + msgSize > maxSize) {
                 // Save message and send current batch first
                 pendingMessage = msg;
-                if (!sendBatch(true)) {
+                if (!sendBatch(retry)) {
                     break; // Batch is retrying
                 }
                 continue;
@@ -880,7 +901,7 @@ class TglogWorker implements Runnable {
             if (!currentBatch.add(msg)) {
                 // Batch full - save message and send batch
                 pendingMessage = msg;
-                if (!sendBatch(true)) {
+                if (!sendBatch(retry)) {
                     break; // Batch is retrying
                 }
                 continue;
@@ -888,7 +909,7 @@ class TglogWorker implements Runnable {
 
             // Check if batch should be sent now
             if (canSendBatchIgnoreTimeout()) {
-                if (!sendBatch(true)) {
+                if (!sendBatch(retry)) {
                     break; // Batch is retrying
                 }
             }
@@ -1928,7 +1949,11 @@ class TglogWorker implements Runnable {
         logger.info("Worker {} flushing {} remaining messages (queue={}, batch={}, pending={})",
                 workerId, totalRemaining, queueSize, batchSize, pendingSize);
 
-        // Flush remaining messages (without retry, with timeout protection)
+        // Flush remaining messages with timeout protection. Run processMessages in
+        // shutdown mode so a batch stuck in retry/backoff is sent immediately and
+        // without re-arming another retry; otherwise this loop would busy-spin
+        // (processMessages returns without draining the queue while in backoff)
+        // until flushDeadline, wasting the whole stopTimeout on CPU spin.
         long flushDeadline = System.currentTimeMillis() + config.getStopTimeout();
         boolean flushTimedOut = false;
         while (!messageQueue.isEmpty() || pendingMessage != null) {
@@ -1937,9 +1962,9 @@ class TglogWorker implements Runnable {
                 break;
             }
 
-            processMessages();
+            processMessages(true);
 
-            // Send final batch
+            // Send final batch (no retry on shutdown)
             if (!currentBatch.isEmpty()) {
                 sendBatch(false);
             }
