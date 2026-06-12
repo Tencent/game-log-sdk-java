@@ -786,6 +786,17 @@ class TglogWorker implements Runnable {
      *                   false when it never finished connecting (retry handled by recovery timer).
      */
     private void handleConnectionError(TglogConnection conn, boolean supplement) {
+        // A connection already scheduled for delayed close is past judgement: a write
+        // failure or peer close on it is expected, not a sign the endpoint is bad. Do
+        // NOT mark the endpoint unavailable or supplement; just rescue its buffered data
+        // and close it. This prevents an already-removed/expiring connection (e.g. a
+        // DNS-removed endpoint's connection) from wrongly marking endpoints unavailable
+        // or triggering spurious supplements.
+        if (removeFromPendingClose(conn)) {
+            flushOrRescueAndClose(conn);
+            return;
+        }
+
         // Remove from both lists
         connections.remove(conn);
         connectingConns.remove(conn);
@@ -1540,22 +1551,54 @@ class TglogWorker implements Runnable {
             }
 
             it.remove();
-            rescueAndClose(dc.conn);
+            flushOrRescueAndClose(dc.conn);
         }
     }
 
     /**
-     * Rescue any buffered data from a connection to a healthy alternative
-     * connection, then close it.
-     * <p>
-     * Used both by {@link #processPendingCloses()} when a delayed-close deadline
-     * fires during normal operation, and by {@link #cleanup()} on shutdown so
-     * data buffered on a connection that could never flush (e.g. its endpoint is
-     * unwritable) is not silently dropped when the connection is force-closed.
+     * Remove a connection from the pending delayed-close list if present.
+     *
+     * @return true if the connection was found and removed (i.e. it was a
+     *         delayed-close connection), false otherwise.
      */
-    private void rescueAndClose(TglogConnection conn) {
+    private boolean removeFromPendingClose(TglogConnection conn) {
+        Iterator<DelayedClose> it = pendingCloseList.iterator();
+        while (it.hasNext()) {
+            if (it.next().conn == conn) {
+                it.remove();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Drain a delayed-close connection's buffered data, then close it.
+     * <p>
+     * Strategy (self-flush first, rescue as fallback):
+     * <ol>
+     *   <li>If the connection is still CONNECTED and has buffered data, try to
+     *       flush it through the connection itself. This preserves data ordering
+     *       and avoids needlessly moving data between connections.</li>
+     *   <li>If data still remains (the connection could not flush it all, or it
+     *       is already ERROR and can never self-flush), rescue the remainder onto
+     *       a healthy alternative connection.</li>
+     *   <li>Close the connection.</li>
+     * </ol>
+     * Used by {@link #processPendingCloses()} when a delayed-close deadline fires,
+     * by {@link #handleConnectionError(TglogConnection, boolean)} when a
+     * delayed-close connection fails a write / is closed by the peer, and by
+     * {@link #cleanup()} on shutdown so data buffered on a connection that could
+     * never flush is not silently dropped when the connection is force-closed.
+     */
+    private void flushOrRescueAndClose(TglogConnection conn) {
         try {
-            // Rescue pending data before closing
+            // 1. Self-flush first: let the connection send its own buffered data.
+            if (conn.getState() == TglogConnection.State.CONNECTED && conn.hasBufferedData()) {
+                conn.tryFlush();
+            }
+
+            // 2. Rescue any remainder onto a healthy alternative connection.
             if (conn.hasBufferedData()) {
                 TglogConnection altConn = getConnection();
                 if (altConn != null && altConn != conn) {
@@ -1580,6 +1623,7 @@ class TglogWorker implements Runnable {
                 }
             }
 
+            // 3. Close.
             conn.close();
             metrics.incrementClosedConn(workerId);
             logger.info("Worker {} closed connection after delay: {}", workerId, conn.getEndpoint());
@@ -2012,11 +2056,11 @@ class TglogWorker implements Runnable {
         // closed) never drains via drainConnectionBuffers(); rescue moves its
         // buffered data onto a still-healthy connection instead of dropping it.
         // Must run while `connections` is still populated, since getConnection()
-        // (used inside rescueAndClose) picks the rescue target from that list.
+        // (used inside flushOrRescueAndClose) picks the rescue target from that list.
         logger.info("Worker {} rescue-closing {} pending delayed-close connections",
                 workerId, pendingCloseList.size());
         for (DelayedClose dc : pendingCloseList) {
-            rescueAndClose(dc.conn);
+            flushOrRescueAndClose(dc.conn);
         }
         pendingCloseList.clear();
 
