@@ -631,16 +631,25 @@ class TglogWorker implements Runnable {
 
             try {
                 if (key.isConnectable()) {
+                    // A still-connecting socket is not yet a live data channel, so
+                    // connectable is handled exclusively (it has no meaningful read/write yet).
                     handleConnectable(conn);
-                } else if (key.isReadable()) {
-                    // OP_READ triggered - check if connection is closed or discard unexpected data
-                    handleReadable(conn);
-                } else if (key.isWritable()) {
-                    // If flush fails, the connection was marked ERROR. Handle it now
-                    // (remove + supplement + mark endpoint) instead of waiting for a
-                    // future send to be routed to this connection and discover -1.
-                    if (!conn.tryFlush()) {
-                        handleConnectionError(conn);
+                } else {
+                    // readable and writable can both be set on the same ready key. Handle
+                    // them independently (not else-if) so servicing a read does not defer
+                    // a pending write flush to the next event-loop iteration.
+                    if (key.isReadable()) {
+                        // OP_READ triggered - check if connection is closed or discard unexpected data
+                        handleReadable(conn);
+                    }
+                    // Re-check validity: handleReadable() may have closed/cancelled the key.
+                    if (key.isValid() && key.isWritable()) {
+                        // If flush fails, the connection was marked ERROR. Handle it now
+                        // (remove + supplement + mark endpoint) instead of waiting for a
+                        // future send to be routed to this connection and discover -1.
+                        if (!conn.tryFlush()) {
+                            handleConnectionError(conn);
+                        }
                     }
                 }
             } catch (Exception e) {
