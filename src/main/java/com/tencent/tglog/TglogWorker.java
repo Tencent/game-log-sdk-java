@@ -1009,7 +1009,14 @@ class TglogWorker implements Runnable {
             totalSize += buf.remaining();
         }
 
-        while (tryCount < connections.size()) {
+        // Fix the retry budget BEFORE the loop. handleConnectionError() removes the failed
+        // connection from `connections`, shrinking its size; if the loop condition kept
+        // reading connections.size() it would move toward tryCount and abandon roughly half
+        // the connections (e.g. 3 connections would only try 2). Snapshot the count so we
+        // attempt up to the original number of connections.
+        final int maxTries = connections.size();
+
+        while (tryCount < maxTries) {
             long sent;
             try {
                 sent = conn.send(buffers);
@@ -1022,7 +1029,7 @@ class TglogWorker implements Runnable {
                 handleConnectionError(conn);
                 tryCount++;
 
-                if (tryCount < connections.size()) {
+                if (tryCount < maxTries) {
                     conn = getConnection();
                     if (conn == null) {
                         return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
@@ -1040,7 +1047,7 @@ class TglogWorker implements Runnable {
                 handleConnectionError(conn);
                 tryCount++;
 
-                if (tryCount < connections.size()) {
+                if (tryCount < maxTries) {
                     conn = getConnection();
                     if (conn == null) {
                         return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
@@ -1057,7 +1064,7 @@ class TglogWorker implements Runnable {
                         workerId, conn.getEndpoint());
                 tryCount++;
 
-                if (tryCount < connections.size()) {
+                if (tryCount < maxTries) {
                     conn = getConnection();
                     if (conn == null) {
                         return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
