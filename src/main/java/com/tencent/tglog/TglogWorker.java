@@ -1540,44 +1540,56 @@ class TglogWorker implements Runnable {
             }
 
             it.remove();
+            rescueAndClose(dc.conn);
+        }
+    }
 
-            try {
-                // Rescue pending data before closing
-                if (dc.conn.hasBufferedData()) {
-                    TglogConnection altConn = getConnection();
-                    if (altConn != null && altConn != dc.conn) {
-                        Queue<ByteBuffer> pending = dc.conn.removePendingData();
-                        if (pending != null && !pending.isEmpty()) {
-                            if (altConn.writePendingData(pending)) {
-                                int rescuedBytes = 0;
-                                for (ByteBuffer buf : pending) {
-                                    rescuedBytes += buf.remaining();
-                                }
-                                metrics.addRescuedMsgBytes(rescuedBytes);
-                                logger.info("Worker {} rescued {} bytes from closing connection {}",
-                                        workerId, rescuedBytes, dc.conn.getEndpoint());
-                            } else {
-                                logger.warn("Worker {} failed to rescue data from closing connection {}",
-                                        workerId, dc.conn.getEndpoint());
+    /**
+     * Rescue any buffered data from a connection to a healthy alternative
+     * connection, then close it.
+     * <p>
+     * Used both by {@link #processPendingCloses()} when a delayed-close deadline
+     * fires during normal operation, and by {@link #cleanup()} on shutdown so
+     * data buffered on a connection that could never flush (e.g. its endpoint is
+     * unwritable) is not silently dropped when the connection is force-closed.
+     */
+    private void rescueAndClose(TglogConnection conn) {
+        try {
+            // Rescue pending data before closing
+            if (conn.hasBufferedData()) {
+                TglogConnection altConn = getConnection();
+                if (altConn != null && altConn != conn) {
+                    Queue<ByteBuffer> pending = conn.removePendingData();
+                    if (pending != null && !pending.isEmpty()) {
+                        if (altConn.writePendingData(pending)) {
+                            int rescuedBytes = 0;
+                            for (ByteBuffer buf : pending) {
+                                rescuedBytes += buf.remaining();
                             }
+                            metrics.addRescuedMsgBytes(rescuedBytes);
+                            logger.info("Worker {} rescued {} bytes from closing connection {}",
+                                    workerId, rescuedBytes, conn.getEndpoint());
+                        } else {
+                            logger.warn("Worker {} failed to rescue data from closing connection {}",
+                                    workerId, conn.getEndpoint());
                         }
-                    } else {
-                        logger.warn("Worker {} no alternative connection to rescue data from {}",
-                                workerId, dc.conn.getEndpoint());
                     }
+                } else {
+                    logger.warn("Worker {} no alternative connection to rescue data from {}",
+                            workerId, conn.getEndpoint());
                 }
+            }
 
-                dc.conn.close();
-                metrics.incrementClosedConn(workerId);
-                logger.info("Worker {} closed connection after delay: {}", workerId, dc.conn.getEndpoint());
+            conn.close();
+            metrics.incrementClosedConn(workerId);
+            logger.info("Worker {} closed connection after delay: {}", workerId, conn.getEndpoint());
 
-            } catch (Exception e) {
-                logger.error("Worker {} error during delayed connection close", workerId, e);
-                try {
-                    dc.conn.close();
-                } catch (Exception e2) {
-                    logger.error("Worker {} error closing connection", workerId, e2);
-                }
+        } catch (Exception e) {
+            logger.error("Worker {} error during delayed connection close", workerId, e);
+            try {
+                conn.close();
+            } catch (Exception e2) {
+                logger.error("Worker {} error closing connection", workerId, e2);
             }
         }
     }
@@ -1995,13 +2007,22 @@ class TglogWorker implements Runnable {
         // Drain connection buffers (like C version's tglog_worker_drain_and_stop)
         drainConnectionBuffers();
 
-        // Close all pending delayed-close connections immediately
-        logger.info("Worker {} closing {} pending delayed-close connections",
+        // Rescue-and-close pending delayed-close connections. A pending-close
+        // connection whose endpoint is unwritable (the very reason it was being
+        // closed) never drains via drainConnectionBuffers(); rescue moves its
+        // buffered data onto a still-healthy connection instead of dropping it.
+        // Must run while `connections` is still populated, since getConnection()
+        // (used inside rescueAndClose) picks the rescue target from that list.
+        logger.info("Worker {} rescue-closing {} pending delayed-close connections",
                 workerId, pendingCloseList.size());
         for (DelayedClose dc : pendingCloseList) {
-            dc.conn.close();
+            rescueAndClose(dc.conn);
         }
         pendingCloseList.clear();
+
+        // Rescue may have moved data onto active connections; drain once more so
+        // those rescued bytes get flushed before we close everything.
+        drainConnectionBuffers();
 
         // Close all connections directly (no delay needed, we've already flushed)
         for (TglogConnection conn : connections) {
