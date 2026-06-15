@@ -583,6 +583,16 @@ class TglogWorker implements Runnable {
      * Handle endpoint update (called in worker thread).
      */
     private void handleEndpointUpdate(List<InetSocketAddress> newEndpoints) {
+        // Ignore empty/null updates. Applying them would wipe currentEndpoints and
+        // close every connection, leaving the worker with nowhere to send. An empty
+        // endpoint list almost always means a transient DNS resolution failure rather
+        // than a genuine "no servers" topology, so keep the existing endpoints.
+        if (newEndpoints == null || newEndpoints.isEmpty()) {
+            logger.warn("Worker {} ignoring empty endpoint update, keeping {} current endpoints",
+                    workerId, currentEndpoints.size());
+            return;
+        }
+
         logger.info("Worker {} processing endpoint update: {} endpoints", workerId, newEndpoints.size());
 
         // Find added and removed endpoints

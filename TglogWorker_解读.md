@@ -232,12 +232,14 @@ while (state == READY) {
 #### `processEndpointUpdates()` / `handleEndpointUpdate()` — DNS 地址变化处理
 当 DNS 解析出新地址时（比如服务器扩容/缩容），Client 会往 `endpointUpdateQueue` 投递新列表。worker 线程取出后：
 ```java
+if (newEndpoints == null || 空) { 打 warn 日志并 return; }  // 忽略空更新，见下方说明
 对比新旧地址，算出"新增的 added"和"移除的 removed"；
 currentEndpoints = 新列表;   // 注意：先更新这个视图，再增删连接（注释解释了顺序的重要性）
 对每个新增地址：addConnectionsForEndpoint(endpoint);   // 先加新连接，保证可用性
 对每个移除地址：removeConnectionsByEndpoint(endpoint); // 再删旧连接
 ```
 - **为什么先更新 `currentEndpoints` 再增删？** 因为 `markEndpointUnavailable()` 会查 `currentEndpoints.size()` 来决定要不要退避，必须先反映新拓扑，否则新加的不可达地址可能被错误跳过。
+- **为什么忽略空更新？** 若直接应用一个空/`null` 列表，会把 `currentEndpoints` 清空并关掉所有连接，让 worker 无处可发。而空列表绝大多数情况是 DNS 解析临时失败，而非真的「没有服务器」，所以保留现有地址继续工作更稳妥。
 
 #### `processSelectionKeys()` — 处理门卫报告的就绪事件
 ```java
