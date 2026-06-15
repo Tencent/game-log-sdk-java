@@ -199,7 +199,10 @@ public class TglogClient implements AutoCloseable {
      * @param logPayload Log message (must end with \n)
      * @param callback Callback for send result (can be null)
      * @return CompletableFuture that completes when the message is sent
-     * @throws TglogException if client is closed or queue is full
+     * @throws TglogException with {@link TglogErrorCode#PRODUCER_CLOSED} if the client
+     *         or selected worker is not running, or {@link TglogErrorCode#SEND_QUEUE_IS_FULL}
+     *         if the worker queue is full (also for {@code BAD_LOG}/{@code LOG_TOO_LONG} on
+     *         payload validation failure)
      */
     public CompletableFuture<Void> send(String logPayload, TglogCallback callback) throws TglogException {
         // Validate client state - synchronous validation errors only throw exception
@@ -261,10 +264,18 @@ public class TglogClient implements AutoCloseable {
         TglogWorker worker = selectWorker();
 
         // Enqueue message - synchronous enqueue failure throws exception
-        // Asynchronous send failures will be reported via callback and future
-        if (!worker.enqueue(message)) {
+        // Asynchronous send failures will be reported via callback and future.
+        // enqueue() distinguishes a full queue (backpressure) from a worker that
+        // is not accepting messages (closing/closed, or its thread exited), so the
+        // caller is not misled into retrying backpressure against a dead worker.
+        TglogErrorCode enqueueResult = worker.enqueue(message);
+        if (enqueueResult != TglogErrorCode.OK) {
             metrics.incrementDroppedMsg();
-            throw new TglogException(TglogErrorCode.SEND_QUEUE_IS_FULL, "Message queue is full");
+            if (enqueueResult == TglogErrorCode.SEND_QUEUE_IS_FULL) {
+                throw new TglogException(TglogErrorCode.SEND_QUEUE_IS_FULL, "Message queue is full");
+            }
+            throw new TglogException(TglogErrorCode.PRODUCER_CLOSED,
+                    "Worker is not running (closing, closed, or its thread exited)");
         }
 
         return future;

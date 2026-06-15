@@ -1796,19 +1796,31 @@ class TglogWorker implements Runnable {
 
     /**
      * Enqueue a message (called from client thread - lock-free).
+     * <p>
+     * Distinguishes the two failure modes so callers can react correctly:
+     * <ul>
+     *   <li>{@link TglogErrorCode#PRODUCER_CLOSED} — the worker is not accepting
+     *       messages (still initializing, closing, closed, or its thread exited
+     *       unexpectedly). The queue is irrelevant; retrying/backing off as if it
+     *       were backpressure will never drain because there is no consumer.</li>
+     *   <li>{@link TglogErrorCode#SEND_QUEUE_IS_FULL} — the worker is running but
+     *       its bounded queue is full (genuine backpressure).</li>
+     * </ul>
+     *
+     * @return {@link TglogErrorCode#OK} on success, otherwise the failure code.
      */
-    public boolean enqueue(LogMessage message) {
+    public TglogErrorCode enqueue(LogMessage message) {
         if (state != State.READY) {
-            return false;
+            return TglogErrorCode.PRODUCER_CLOSED;
         }
 
-        boolean success = messageQueue.offer(message);
-        if (success) {
-            metrics.incrementEnqueuedMsg();
-            // No need to wake up selector - worker thread polls queue every 2ms
+        if (!messageQueue.offer(message)) {
+            return TglogErrorCode.SEND_QUEUE_IS_FULL;
         }
 
-        return success;
+        metrics.incrementEnqueuedMsg();
+        // No need to wake up selector - worker thread polls queue every 2ms
+        return TglogErrorCode.OK;
     }
 
     /**
