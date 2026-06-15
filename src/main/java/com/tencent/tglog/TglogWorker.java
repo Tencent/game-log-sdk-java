@@ -665,12 +665,7 @@ class TglogWorker implements Runnable {
                     }
                     // Re-check validity: handleReadable() may have closed/cancelled the key.
                     if (key.isValid() && key.isWritable()) {
-                        // If flush fails, the connection was marked ERROR. Handle it now
-                        // (remove + supplement + mark endpoint) instead of waiting for a
-                        // future send to be routed to this connection and discover -1.
-                        if (!conn.tryFlush()) {
-                            handleConnectionError(conn);
-                        }
+                        handleWritable(conn);
                     }
                 }
             } catch (Exception e) {
@@ -817,6 +812,19 @@ class TglogWorker implements Runnable {
                         workerId, bytesRead, conn.getEndpoint());
             }
             // UDP doesn't have connection close, bytesRead won't be -1
+        }
+    }
+
+    /**
+     * Handle writable event: flush the connection's buffered output.
+     * <p>
+     * If the flush fails the connection was marked ERROR, so handle it now
+     * (remove + supplement + mark endpoint) instead of waiting for a future send
+     * to be routed to this connection and discover -1.
+     */
+    private void handleWritable(TglogConnection conn) {
+        if (!conn.tryFlush()) {
+            handleConnectionError(conn);
         }
     }
 

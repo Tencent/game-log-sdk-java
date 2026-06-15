@@ -251,12 +251,16 @@ currentEndpoints = 新列表;   // 注意：先更新这个视图，再增删连
         if (key.isReadable()) handleReadable(conn);  // 可读：探测对端是否关闭/丢弃意外数据
         // 注意：读和写不是 else-if，而是各自独立判断，
         // 这样处理完读不会把"写"推迟到下一轮
-        if (key.isValid() && key.isWritable()) {
-            if (!conn.tryFlush()) handleConnectionError(conn);  // 刷缓冲；失败说明连接坏了
-        }
+        if (key.isValid() && key.isWritable()) handleWritable(conn);  // 可写：刷缓冲
     }
 ```
 - 注释里特别说明：读和写可能在同一次同时就绪，要分别处理，不能用 `else if`，否则会延迟刷写。
+
+#### `handleWritable(conn)` — 处理可写事件
+```java
+if (!conn.tryFlush()) handleConnectionError(conn);  // 刷缓冲；失败说明连接坏了，立即处理
+```
+- 刷缓冲失败说明连接已被标记 ERROR，这里立即走错误处理（移除+补充+标记地址），而不是等下次发送被路由到这条坏连接才发现 -1。
 
 #### `checkConnectingConnections()` — 检查连接中的连接
 遍历 `connectingConns`：
