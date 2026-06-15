@@ -398,7 +398,7 @@ class TglogWorker implements Runnable {
         currentEndpoints = new ArrayList<>(initialEndpoints);
 
         // Determine connections per endpoint
-        connectionsPerEndpoint = currentEndpoints.size() <= 2 ? 2 : 1;
+        connectionsPerEndpoint = currentEndpoints.size() <= 2 ? 3 : 2;
         logger.info("Worker {} using {} connections per endpoint (total endpoints: {})",
                 workerId, connectionsPerEndpoint, currentEndpoints.size());
 
