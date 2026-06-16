@@ -130,14 +130,6 @@ class TglogWorker implements Runnable {
     // Pending delayed-close entries (processed in worker thread)
     private final List<DelayedClose> pendingCloseList;
 
-    // In-flight expired-connection replacements (accessed only by worker thread).
-    // Maps a newly created replacement connection (still in connectingConns) to the
-    // old expired connection it will replace. The old connection keeps serving traffic
-    // until the new one reaches CONNECTED, at which point checkConnectingConnections()
-    // schedules the old one for delayed close. This avoids a window where the endpoint
-    // temporarily loses a usable connection just because connect() was initiated.
-    private final Map<TglogConnection, TglogConnection> pendingReplacements;
-
     /**
      * Represents a connection scheduled for delayed close.
      */
@@ -181,9 +173,6 @@ class TglogWorker implements Runnable {
 
         // Initialize pending close list (processed in worker thread)
         this.pendingCloseList = new ArrayList<>();
-
-        // Initialize in-flight replacement map (processed in worker thread)
-        this.pendingReplacements = new HashMap<>();
     }
 
     /**
@@ -714,14 +703,18 @@ class TglogWorker implements Runnable {
 
                 // If this connection was created to replace an expired one, the
                 // replacement is now usable: retire the old connection (delayed close
-                // so its buffered data can still drain) and clear the mapping.
-                TglogConnection replacedConn = pendingReplacements.remove(conn);
+                // so its buffered data can still drain) and clear the reference.
+                // If the old connection already errored out while this one was still
+                // connecting, it is no longer in `connections` and remove() returns
+                // false, so we simply skip retiring it.
+                TglogConnection replacedConn = conn.getReplacingConn();
                 if (replacedConn != null) {
                     if (connections.remove(replacedConn)) {
                         logger.info("Worker {} replacement ready, retiring expired connection: {}",
                                 workerId, replacedConn.getEndpoint());
                         closeConnectionWithDelay(replacedConn);
                     }
+                    conn.setReplacingConn(null);
                 }
 
                 logger.info("Worker {} connection ready: {} (total: {})",
@@ -731,12 +724,13 @@ class TglogWorker implements Runnable {
                 // Remove failed connection
                 connectingConns.remove(i);
 
-                // If this was a replacement attempt, it failed: drop the mapping and
+                // If this was a replacement attempt, it failed: drop the reference and
                 // keep the old (expired) connection serving. The next replace cycle
                 // will retry; meanwhile the endpoint does not lose a usable connection.
-                if (pendingReplacements.remove(conn) != null) {
+                if (conn.getReplacingConn() != null) {
                     logger.warn("Worker {} replacement connection failed, keeping expired connection alive: {}",
                             workerId, conn.getEndpoint());
+                    conn.setReplacingConn(null);
                 }
 
                 // Mark endpoint unavailable
@@ -850,19 +844,19 @@ class TglogWorker implements Runnable {
         connections.remove(conn);
         connectingConns.remove(conn);
 
-        // If this connection was an in-flight replacement that just failed, drop the
-        // mapping so the old (expired) connection it would have replaced keeps serving
-        // and is eligible to be replaced again on the next cycle.
-        if (pendingReplacements.remove(conn) != null) {
+        // If this connection was an in-flight replacement that just failed, drop its
+        // reference to the old (expired) connection so the latter keeps serving and is
+        // eligible to be replaced again on the next cycle.
+        if (conn.getReplacingConn() != null) {
             logger.warn("Worker {} in-flight replacement connection errored, keeping expired connection alive: {}",
                     workerId, conn.getEndpoint());
+            conn.setReplacingConn(null);
         }
 
-        // If this connection is an old connection that some in-flight replacement is
-        // pointing at (it broke before its replacement finished connecting), drop the
-        // mapping. When the replacement later reaches CONNECTED it will simply find no
-        // old connection to retire.
-        pendingReplacements.values().remove(conn);
+        // If this connection is instead an OLD connection that some in-flight replacement
+        // points at (it broke before its replacement finished connecting), no action is
+        // needed: it was just removed from `connections` above, so when the replacement
+        // reaches CONNECTED its connections.remove(old) returns false and retiring is skipped.
 
         // Immediately unregister OP_READ to avoid busy-wait during delayed close
         if (conn.getSelectionKey() != null && conn.getSelectionKey().isValid()) {
@@ -1529,19 +1523,13 @@ class TglogWorker implements Runnable {
      * handshake window (and, in the worst case, leave the worker with zero usable
      * connections and trigger an unnecessary emergency supplement).
      * <p>
-     * Instead we record the (newConn -> oldConn) replacement intent. When the new
-     * connection reaches CONNECTED, {@code checkConnectingConnections()} schedules the
-     * old one for delayed close. If the new connection fails to connect, the mapping
-     * is dropped and the old (expired) connection keeps serving until the next replace
-     * cycle retries.
+     * Instead the new connection records a reference to the old one it will replace
+     * ({@link TglogConnection#setReplacingConn}). When the new connection reaches
+     * CONNECTED, {@code checkConnectingConnections()} schedules the old one for delayed
+     * close. If the new connection fails to connect, the reference is dropped and the
+     * old (expired) connection keeps serving until the next replace cycle retries.
      */
     private void replaceConnection(TglogConnection oldConn) {
-        // Already being replaced (its new connection is still connecting) — don't
-        // create a second replacement or we'd over-supplement this endpoint.
-        if (pendingReplacements.containsValue(oldConn)) {
-            return;
-        }
-
         // Find an available endpoint using round-robin
         for (int i = 0; i < currentEndpoints.size(); i++) {
             int index = (endpointReplaceIndex++ & Integer.MAX_VALUE) % currentEndpoints.size();
@@ -1558,7 +1546,7 @@ class TglogWorker implements Runnable {
 
                 // Defer removing/closing the old connection until the new one is
                 // actually CONNECTED (handled in checkConnectingConnections()).
-                pendingReplacements.put(newConn, oldConn);
+                newConn.setReplacingConn(oldConn);
 
                 return;
             } catch (IOException e) {
@@ -1879,18 +1867,18 @@ class TglogWorker implements Runnable {
             if (conn.getEndpoint().equals(endpoint)) {
                 connectingConns.remove(i);
                 // If this connecting socket was an in-flight replacement, drop its
-                // mapping so we don't try to retire an old connection on behalf of a
+                // reference so we don't try to retire an old connection on behalf of a
                 // replacement that no longer exists.
-                pendingReplacements.remove(conn);
+                conn.setReplacingConn(null);
                 conn.close();
                 metrics.incrementClosedConn(workerId);
             }
         }
 
-        // Drop any replacement mappings whose old (target) connection belonged to this
-        // endpoint and was just closed above. The replacement (if it still connects)
-        // will then simply find no old connection to retire.
-        pendingReplacements.values().removeIf(old -> old.getEndpoint().equals(endpoint));
+        // No extra cleanup needed for replacements targeting this endpoint's old
+        // connections: those old connections were just removed/closed above, so any
+        // surviving replacement that later reaches CONNECTED finds connections.remove(old)
+        // returning false and skips retiring.
     }
 
     /**

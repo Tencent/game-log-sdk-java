@@ -60,6 +60,12 @@ class TglogConnection {
     // Connection lifetime with jitter (to avoid all connections expiring at the same time)
     private long lifetimeWithJitterMs = 0;
 
+    // When this connection is an in-flight replacement created to retire an expired
+    // connection, this points at that expired connection. Once this one reaches
+    // CONNECTED, the worker retires the referenced old connection; on failure the
+    // reference is simply dropped. Worker-thread-only state, so no synchronization.
+    private TglogConnection replacingConn;
+
     // Output buffer for partial writes (similar to C's bufferevent)
     // Ensures data integrity by keeping unsent data bound to this connection
     private final Queue<ByteBuffer> outputBuffer = new LinkedList<>();
@@ -659,6 +665,18 @@ class TglogConnection {
 
     public InetSocketAddress getEndpoint() {
         return endpoint;
+    }
+
+    /**
+     * The expired connection this one was created to replace, or null if this
+     * connection is not an in-flight replacement. Worker-thread-only.
+     */
+    public TglogConnection getReplacingConn() {
+        return replacingConn;
+    }
+
+    public void setReplacingConn(TglogConnection replacingConn) {
+        this.replacingConn = replacingConn;
     }
 
     public int getRetryCount() {
