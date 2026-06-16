@@ -5,6 +5,79 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-06-16
+
+### 问题修复
+
+- **修复 TCP 分片写入失败时的消息边界问题**：
+  - 修复 gathering write 缓冲区状态在部分提交后未正确重置的问题
+  - 防止连接重试时出现帧损坏和消息重复发送
+  - 重试时消息现在以完整帧发送
+
+- **修复空端点更新导致所有连接被清空**：
+  - DNS 解析瞬时故障不再清空现有连接
+  - 忽略空的端点更新，保持连接稳定性
+
+- **修复过期连接替换时的连接空窗期**：
+  - 追踪进行中的替换连接，仅在新连接建立后才关闭旧连接
+  - 防止因连接空窗期触发不必要的紧急连接补充
+
+- **修复入队失败时的错误码区分**：
+  - `enqueue()` 现在返回 `TglogErrorCode`（`PRODUCER_CLOSED` 或 `SEND_QUEUE_IS_FULL`），替代原有的 boolean 返回值
+  - 调用方可准确区分 Worker 未运行与队列已满两种情况
+
+- **修复延迟关闭连接的错误处理**：
+  - 延迟关闭连接上的连接错误现在路由到救援/自刷新逻辑，而非标记端点不可用
+
+- **修复关闭时延迟关闭连接的数据丢失**：
+  - `cleanup()` 现在使用 `rescueAndClose()` 处理待关闭连接，防止静默数据丢失
+
+- **修复选择键的可读/可写事件独立处理**：
+  - 移除 else-if 链，可读和可写事件现在独立处理
+  - 防止写刷新被推迟到下一次迭代
+
+- **修复关闭模式下的 CPU 空转**：
+  - `processMessages()` 在关闭模式下忽略退避窗口
+  - 消除 close() 期间的 CPU 空转问题
+
+- **修复 TCP 发送重试循环中的连接计数快照**：
+  - 重试循环前先快照连接数，防止 `handleConnectionError()` 期间出现僵尸连接
+
+- **修复批次中途连接异常时的重试逻辑**：
+  - `conn.send()` 抛出 `IOException` 时不再导致整个批次失败，而是重试其他连接
+
+- **修复 close() 的 flush 未在超时内排空时缺少日志**：
+  - 停止超时场景下新增 INFO 级别日志输出
+
+- **修复 flush 跨线程状态读取的线程安全问题**：
+  - flush 通过 Worker 线程请求方式实现，替代原有的跨线程状态读取
+
+- **修复 tryFlush 失败未传递给 Worker 的问题**：
+  - Worker 现在能立即处理 flush 失败，及时进行连接清理
+
+- **修复 close() 时 Worker 线程 join 缺失导致的指标注销竞争**：
+  - 指标注销前先 join Worker 线程，防止并发竞争
+
+### 性能优化
+
+- **调整每端点连接数，提升冗余度**：
+  - 端点数 ≤ 2 时：每端点连接数从 2 提升至 3
+  - 端点数 > 2 时：每端点连接数从 1 提升至 2
+
+- **替换过期连接的追踪方式优化**：
+  - 用单个 `TglogConnection.replacingConn` 字段替代 `Map<new, old>`
+  - 消除 O(n) 反向查找，提升性能
+
+- **UDP 发送重试行为与 TCP 对齐**：
+  - UDP 现在使用快照的 `connections.size()` 作为重试预算
+  - 统一错误处理语义：`sent < 0` 表示连接错误，`sent == 0` 表示 EAGAIN
+
+### 代码改进
+
+- 提取 `handleWritable()` 方法，与 `handleConnectable()`/`handleReadable()` 保持一致的代码结构
+
+---
+
 ## [1.0.1] - 2026-04-29
 
 ### 问题修复
@@ -463,6 +536,7 @@
 
 ---
 
+[1.0.2]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.2
 [1.0.1]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.1
 [1.0.0]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.0
 [1.0.0-rc.3]: https://git.woa.com/tglog/v3/sdk-java/-/tags/v1.0.0-rc.3

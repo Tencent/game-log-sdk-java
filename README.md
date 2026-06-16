@@ -12,7 +12,7 @@
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -164,7 +164,7 @@ mvn package
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 
 <!-- SLF4J 实现（根据项目需要选择） -->
@@ -178,7 +178,7 @@ mvn package
 **或直接使用JAR文件：**
 ```bash
 mvn package
-# 使用 target/tglog-java-1.0.1.jar
+# 使用 target/tglog-java-1.0.2.jar
 ```
 
 **系统要求：**

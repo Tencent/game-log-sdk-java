@@ -44,7 +44,7 @@ mvn clean compile
 <dependency>
     <groupId>com.tencent.tglog</groupId>
     <artifactId>tglog-java</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -61,7 +61,7 @@ mvn clean package
 
 # 打包后的JAR在 target/ 目录
 # 使用JAR
-java -cp target/tglog-java-1.0.1.jar:your-app.jar YourApp
+java -cp target/tglog-java-1.0.2.jar:your-app.jar YourApp
 ```
 
 ### 方式3: 直接使用编译后的类
