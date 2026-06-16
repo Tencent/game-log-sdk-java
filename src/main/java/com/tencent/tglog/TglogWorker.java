@@ -1206,10 +1206,14 @@ class TglogWorker implements Runnable {
      * Send batch via UDP.
      */
     private SendResult sendBatchUdp(TglogConnection conn, ByteBuffer[] buffers) {
-        // UDP sends first buffer only
+        // UDP sends the single combined buffer.
         ByteBuffer buffer = buffers[0];
-        // int totalSize = buffer.remaining(); // Unused, but kept for potential future logging
-        int maxTries = Math.min(connections.size(), 3); // Try up to 3 connections
+
+        // Fix the retry budget BEFORE the loop, mirroring sendBatchTcp(): handleConnectionError()
+        // removes the failed connection from `connections`, shrinking its size; reading
+        // connections.size() inside the loop condition would move it toward tryCount and abandon
+        // roughly half the connections. Snapshot the count so we attempt up to the original number.
+        final int maxTries = connections.size();
         int tryCount = 0;
 
         while (tryCount < maxTries) {
@@ -1233,38 +1237,42 @@ class TglogWorker implements Runnable {
                 return SendResult.error(TglogErrorCode.SEND_FAILED);
             }
 
+            // Connection error - mark as failed and try another connection (aligned with TCP:
+            // drop the bad connection on every failure, not only on the last attempt).
             if (sent < 0) {
-                // EAGAIN or error - try another connection
+                logger.error("Worker {} UDP send error on connection {}, trying next connection",
+                        workerId, conn.getEndpoint());
+                handleConnectionError(conn);
                 tryCount++;
                 if (tryCount < maxTries) {
                     conn = getConnection();
                     if (conn == null) {
                         return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
                     }
-                    logger.debug("UDP send would block, trying another connection (attempt {}/{})",
-                            (tryCount + 1), maxTries);
                     continue;
                 }
-
-                handleConnectionError(conn);
                 return SendResult.error(TglogErrorCode.SEND_FAILED);
             }
 
-            // UDP sends all or nothing - if sent > 0, all data was sent
-            if (sent > 0) {
-                return SendResult.ok();
+            // sent == 0 means EAGAIN / would block - try another connection (not a connection
+            // error, so do NOT drop the connection, mirroring TCP's high-watermark handling).
+            if (sent == 0) {
+                logger.warn("Worker {} UDP connection {} would block, trying next connection",
+                        workerId, conn.getEndpoint());
+                tryCount++;
+                if (tryCount < maxTries) {
+                    conn = getConnection();
+                    if (conn == null) {
+                        return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
+                    }
+                    continue;
+                }
+                logger.warn("Worker {} all UDP connections would block, will retry later", workerId);
+                return SendResult.error(TglogErrorCode.SEND_FAILED);
             }
 
-            // sent == 0 means EAGAIN, try another connection
-            tryCount++;
-            if (tryCount < maxTries) {
-                conn = getConnection();
-                if (conn == null) {
-                    return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
-                }
-                logger.debug("UDP send would block (sent=0), trying another connection (attempt {}/{})",
-                        (tryCount + 1), maxTries);
-            }
+            // sent > 0: UDP sends all or nothing, so all data was sent.
+            return SendResult.ok();
         }
 
         return SendResult.error(TglogErrorCode.SEND_FAILED);

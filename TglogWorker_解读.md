@@ -386,7 +386,25 @@ return error(SEND_FAILED);
 - **故障转移**：一条连接发不动，自动换下一条，最多尝试「原始连接数」次。
 
 #### `sendBatchUdp(conn, buffers)` — UDP 发送
-逻辑类似，但最多尝试 `min(连接数, 3)` 次。UDP 是「全发或不发」，`sent > 0` 即成功，`sent == 0` 视为系统缓冲满（EAGAIN）换连接重试。
+```java
+final int maxTries = connections.size();  // 与 TCP 一致：循环前固定，避免 handleConnectionError 缩短列表
+while (tryCount < maxTries) {
+    try { sent = conn.send(buffer); }       // UDP 只发合并后的单个 buffer（buffers[0]）
+    catch (IOException e) {                  // 写到一半连接崩了
+        handleConnectionError(conn); tryCount++;
+        换下一条连接，没有了就返回失败; continue;
+    }
+    if (sent < 0)  { 连接错误 → handleConnectionError 摘掉坏连接，换下一条 }
+    if (sent == 0) { EAGAIN/系统缓冲满 → 换连接（不算连接错误，不摘连接） }
+    // sent > 0：UDP 全发或不发，发出即成功
+    return ok();
+}
+return error(SEND_FAILED);
+```
+- 结构已**对齐 TCP**：三段 `sent < 0`（连接错误，摘连接）/ `sent == 0`（阻塞，仅换连接）/ `sent > 0`（成功）一一对应 TCP 的连接错误 / 高水位 / 成功。
+- **两处行为对齐**（相对旧实现）：
+  1. `maxTries` 从 `min(连接数, 3)` 改成 `连接数`，重试上限不再被硬编码的 3 限制。
+  2. `sent < 0` **每次**都调 `handleConnectionError` 摘掉坏连接（旧实现只在最后一次尝试才摘），坏连接不会被反复选中。
 
 #### `retryBatch()` — 安排重试
 ```java
