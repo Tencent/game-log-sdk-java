@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Performance test for TglogClient.
- *
+ * <p>
  * This test demonstrates the usage and performance of the pure Java TGLog client.
  */
 public class TglogClientTest {
@@ -29,7 +29,7 @@ public class TglogClientTest {
         System.out.println("  Batch Size:    " + testConfig.batchSize);
         System.out.println("  With Callback: " + testConfig.withCallback);
         System.out.println("  Rate Limit:    " + (testConfig.rateLimit > 0 ?
-            String.format("%,d msg/s", testConfig.rateLimit) : "unlimited"));
+                String.format("%,d msg/s", testConfig.rateLimit) : "unlimited"));
         printSeparator();
 
         try {
@@ -119,7 +119,7 @@ public class TglogClientTest {
                 long intervalElapsed = now - lastReportTime;
                 long totalElapsed = now - startTime;
                 long intervalRate = reportInterval * 1000L / Math.max(intervalElapsed, 1);
-                long avgRate = (long)(i + 1) * 1000L / Math.max(totalElapsed, 1);
+                long avgRate = (long) (i + 1) * 1000L / Math.max(totalElapsed, 1);
                 System.out.printf("Progress: %.0f%% (%,d messages) - Interval: %,d msg/s, Average: %,d msg/s\n",
                         progress, i + 1, intervalRate, avgRate);
                 lastReportTime = now;
@@ -131,7 +131,7 @@ public class TglogClientTest {
 
         System.out.println("\nAll messages sent to queue");
         System.out.printf("Send duration: %,d ms\n", sendDuration);
-        System.out.printf("Send rate: %,d msg/s\n", (long)testConfig.messageCount * 1000L / Math.max(sendDuration, 1));
+        System.out.printf("Send rate: %,d msg/s\n", (long) testConfig.messageCount * 1000L / Math.max(sendDuration, 1));
 
         // Wait for callbacks if enabled
         if (testConfig.withCallback) {
@@ -160,7 +160,7 @@ public class TglogClientTest {
         System.out.printf("Total Duration:     %,d ms (%.2f seconds)\n",
                 totalDuration, totalDuration / 1000.0);
         System.out.printf("Overall Throughput: %,d msg/s\n",
-                (long)testConfig.messageCount * 1000L / Math.max(totalDuration, 1));
+                (long) testConfig.messageCount * 1000L / Math.max(totalDuration, 1));
         System.out.println();
         System.out.printf("Messages Requested: %,d\n", metrics.getRequestMsgCount());
         System.out.printf("Messages Enqueued:  %,d\n", metrics.getEnqueuedMsgCount());
