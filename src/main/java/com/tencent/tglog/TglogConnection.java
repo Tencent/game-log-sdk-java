@@ -342,7 +342,24 @@ class TglogConnection {
             // Try to send directly
             long sent;
             if (protocol == TglogConfig.Protocol.TCP) {
-                sent = tcpChannel.write(buffers);
+                try {
+                    sent = tcpChannel.write(buffers);
+                } catch (IOException e) {
+                    // A gathering write that fails mid-way may have already drained the
+                    // leading buffers into the kernel before throwing. Measure how many
+                    // bytes were consumed from the buffer array so the worker can advance
+                    // the batch to a whole-message boundary instead of blindly resending
+                    // (which would duplicate the sent prefix) or abandoning everything
+                    // (which would lose it). Since the protocol has no ACK we cannot know
+                    // how many of these committed bytes actually reached the peer; the
+                    // worker treats fully-consumed messages as best-effort delivered and
+                    // the single straddling message as torn/failed.
+                    long committed = consumedBytes(buffers);
+                    logger.error("Failed to send data to {} (committed {} bytes before failure)",
+                            endpoint, committed, e);
+                    state = State.ERROR;
+                    throw new PartialWriteException(committed, e);
+                }
             } else {
                 // UDP doesn't support gathering write, send first buffer only
                 sent = udpChannel.write(buffers[0]);
@@ -398,6 +415,19 @@ class TglogConnection {
             state = State.ERROR;
             throw e;
         }
+    }
+
+    /**
+     * Sum of bytes consumed (position advanced) across a buffer array. Buffers in this
+     * array always start at position 0 with limit == capacity (each wraps a full message
+     * payload, see {@link BatchBuffer#prepareForTcp()}), so consumed == capacity - remaining.
+     */
+    private static long consumedBytes(ByteBuffer[] buffers) {
+        long consumed = 0;
+        for (ByteBuffer buf : buffers) {
+            consumed += buf.capacity() - buf.remaining();
+        }
+        return consumed;
     }
 
     /**

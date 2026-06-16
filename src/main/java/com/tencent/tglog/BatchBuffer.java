@@ -257,14 +257,17 @@ class BatchBuffer {
         // Remove sent messages
         messages.subList(0, sentCount).clear();
 
-        // Trim sendBuffers to match remaining messages (avoid stale cache on retry)
+        // Trim sendBuffers to match remaining messages (avoid stale cache on retry).
+        // Re-allocate to an exactly-sized array so prepareForSend() never hands the
+        // worker an array padded with trailing nulls (a partial removal would otherwise
+        // leave sendBuffers.length > sendBufferCount, and sendBatchTcp iterates the whole
+        // array). Keeping length == sendBufferCount keeps that contract simple.
         if (sendBuffers != null && sendBufferCount > 0) {
             int remaining = sendBufferCount - sentCount;
             if (remaining > 0) {
-                System.arraycopy(sendBuffers, sentCount, sendBuffers, 0, remaining);
-                for (int i = remaining; i < sendBufferCount; i++) {
-                    sendBuffers[i] = null;
-                }
+                ByteBuffer[] trimmed = new ByteBuffer[remaining];
+                System.arraycopy(sendBuffers, sentCount, trimmed, 0, remaining);
+                sendBuffers = trimmed;
                 sendBufferCount = remaining;
             } else {
                 sendBuffers = null;
@@ -276,6 +279,63 @@ class BatchBuffer {
         if (messages.isEmpty()) {
             createTime = 0;
             currentSize = 0;
+        }
+    }
+
+    /**
+     * Handle a connection that committed {@code committedBytes} of this batch and then
+     * died (see {@link PartialWriteException}). The protocol is request-only, so once
+     * bytes leave on a connection we treat them as best-effort delivered even though we
+     * cannot get an ACK.
+     *
+     * <p>Behavior, rounding to whole-message boundaries:
+     * <ul>
+     *   <li>Messages that fit entirely within {@code committedBytes} are notified as
+     *       success and removed — they were fully handed to the (now dead) kernel.</li>
+     *   <li>The single message straddling the boundary (whose prefix leaked onto the
+     *       dead connection as an unavoidable truncated fragment) and every message
+     *       after it are <em>kept</em> so they can be resent <em>whole</em> on the next
+     *       connection. This guarantees clean framing on the surviving connection: the
+     *       SDK never writes the second half of a message to a different connection.</li>
+     * </ul>
+     *
+     * <p>Remaining buffers are rewound so the next {@link #prepareForSend()} resends them
+     * from the start of each message.
+     *
+     * @param committedBytes bytes the dead connection committed before failing
+     * @return number of fully-committed messages that were notified as success and
+     *         removed (the caller uses this to update success metrics)
+     */
+    public int advancePastCommitted(long committedBytes) {
+        if (committedBytes <= 0 || messages.isEmpty()) {
+            // Nothing committed: rewind buffers so the whole batch resends cleanly.
+            rewindSendBuffers();
+            return 0;
+        }
+
+        int committedCount = calculateSentMessages(committedBytes);
+        if (committedCount > 0) {
+            // Best-effort delivered on the dead connection: notify success and drop them.
+            // notifyAndRemove() also trims sendBuffers to the remaining messages.
+            notifyAndRemove(committedCount);
+        }
+
+        // Rewind whatever remains (including the straddling message) so it is resent
+        // whole, with intact framing, on the next connection.
+        rewindSendBuffers();
+        return committedCount;
+    }
+
+    /**
+     * Rewind cached send buffers to their start so a resend transmits each message whole.
+     */
+    private void rewindSendBuffers() {
+        if (sendBuffers != null && sendBufferCount > 0) {
+            for (int i = 0; i < sendBufferCount; i++) {
+                if (sendBuffers[i] != null) {
+                    sendBuffers[i].rewind();
+                }
+            }
         }
     }
 
