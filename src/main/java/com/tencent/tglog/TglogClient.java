@@ -67,6 +67,14 @@ public class TglogClient implements AutoCloseable {
             throw new TglogException("Config cannot be null");
         }
 
+        // Auto-adjust batching max size based on protocol limits
+        int maxRequestSize = config.getMaxRequestSize();
+        if (config.getBatchingMaxSize() > maxRequestSize) {
+            logger.warn("Batching max size ({}) exceeds protocol limit ({}), adjusting to {}",
+                    config.getBatchingMaxSize(), maxRequestSize, maxRequestSize);
+            config.setBatchingMaxSize(maxRequestSize);
+        }
+
         this.config = config;
 
         // Use custom registry if provided, otherwise use default
@@ -80,13 +88,6 @@ public class TglogClient implements AutoCloseable {
         // the shared CollectorRegistry clean for retry / recreation.
         boolean initSucceeded = false;
         try {
-            // Auto-adjust batching max size based on protocol limits
-            int maxRequestSize = config.getMaxRequestSize();
-            if (config.getBatchingMaxSize() > maxRequestSize) {
-                logger.warn("Batching max size ({}) exceeds protocol limit ({}), adjusting to {}",
-                        config.getBatchingMaxSize(), maxRequestSize, maxRequestSize);
-                config.setBatchingMaxSize(maxRequestSize);
-            }
 
             // Initialize endpoint manager
             this.endpointManager = new EndpointManager(
