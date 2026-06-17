@@ -99,8 +99,7 @@ class TglogWorker implements Runnable {
     private int connectionsPerEndpoint;
 
     // Unavailable endpoint tracking (accessed only by worker thread)
-    private final Map<String, Long> unavailableEndpoints;
-    private final Map<String, Integer> endpointRetryCount;
+    private final Map<String, UnavailableState> unavailableEndpoints;
 
     // Batch management (accessed only by worker thread)
     private final BatchBuffer currentBatch;
@@ -146,6 +145,22 @@ class TglogWorker implements Runnable {
     }
 
     /**
+     * Tracks the unavailability of an endpoint: when it was (last) marked
+     * unavailable and how many recovery attempts have been made. Bundling both
+     * fields keeps the timestamp and retry count from drifting out of sync, since
+     * they always change together.
+     */
+    private static class UnavailableState {
+        long unavailableTime;
+        int retryCount;
+
+        UnavailableState(long unavailableTime) {
+            this.unavailableTime = unavailableTime;
+            this.retryCount = 0;
+        }
+    }
+
+    /**
      * Create a new worker.
      */
     public TglogWorker(int workerId, TglogConfig config, TglogMetrics metrics) {
@@ -166,7 +181,6 @@ class TglogWorker implements Runnable {
         this.connections = new ArrayList<>();
         this.connectingConns = new ArrayList<>();
         this.unavailableEndpoints = new HashMap<>();
-        this.endpointRetryCount = new HashMap<>();
 
         // Initialize batch buffer
         this.currentBatch = new BatchBuffer(config);
@@ -633,7 +647,6 @@ class TglogWorker implements Runnable {
         for (InetSocketAddress endpoint : removed) {
             removeConnectionsByEndpoint(endpoint);
             unavailableEndpoints.remove(endpoint.toString());
-            endpointRetryCount.remove(endpoint.toString());
             metrics.incrementRemoveEndpoint();
         }
 
@@ -705,7 +718,6 @@ class TglogWorker implements Runnable {
                 // has been successfully established.
                 String addr = conn.getEndpoint().toString();
                 if (unavailableEndpoints.remove(addr) != null) {
-                    endpointRetryCount.remove(addr);
                     logger.info("Worker {} endpoint recovered: {}", workerId, addr);
                 }
 
@@ -1461,8 +1473,7 @@ class TglogWorker implements Runnable {
             return;
         }
 
-        unavailableEndpoints.put(addr, System.currentTimeMillis());
-        endpointRetryCount.put(addr, 0);
+        unavailableEndpoints.put(addr, new UnavailableState(System.currentTimeMillis()));
 
         logger.warn("Worker {} marked endpoint unavailable: {}", workerId, addr);
     }
@@ -1478,14 +1489,13 @@ class TglogWorker implements Runnable {
         long now = System.currentTimeMillis();
         List<String> toRecover = new ArrayList<>();
 
-        for (Map.Entry<String, Long> entry : unavailableEndpoints.entrySet()) {
+        for (Map.Entry<String, UnavailableState> entry : unavailableEndpoints.entrySet()) {
             String addr = entry.getKey();
-            long unavailableTime = entry.getValue();
-            int retries = endpointRetryCount.getOrDefault(addr, 0);
+            UnavailableState ustate = entry.getValue();
 
-            long nextRetryInterval = Backoff.ENDPOINT_RECOVERY.getNextInterval(retries);
+            long nextRetryInterval = Backoff.ENDPOINT_RECOVERY.getNextInterval(ustate.retryCount);
 
-            if (now - unavailableTime >= nextRetryInterval) {
+            if (now - ustate.unavailableTime >= nextRetryInterval) {
                 toRecover.add(addr);
             }
         }
@@ -1519,9 +1529,11 @@ class TglogWorker implements Runnable {
                 // The unavailable/retry state is cleared in checkConnectingConnections()
                 // only once the connection reaches CONNECTED. Here we just advance the
                 // backoff so we don't re-attempt before the next interval elapses.
-                int retries = endpointRetryCount.getOrDefault(addr, 0);
-                endpointRetryCount.put(addr, retries + 1);
-                unavailableEndpoints.put(addr, now);
+                UnavailableState ustate = unavailableEndpoints.get(addr);
+                if (ustate != null) {
+                    ustate.retryCount++;
+                    ustate.unavailableTime = now;
+                }
 
                 if (successfulConns == 0) {
                     logger.warn("Worker {} failed to initiate any recovery connection for {}", workerId, addr);
