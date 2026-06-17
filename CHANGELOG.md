@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.2] - 2026-06-16
+## [1.0.2] - 2026-06-17
 
 ### 问题修复
 
@@ -71,6 +71,11 @@
 - **UDP 发送重试行为与 TCP 对齐**：
   - UDP 现在使用快照的 `connections.size()` 作为重试预算
   - 统一错误处理语义：`sent < 0` 表示连接错误，`sent == 0` 表示 EAGAIN
+
+- **Worker 连接并行初始化，加快客户端启动**：
+  - `TglogWorker.start()` 拆分为 `start()`（仅启动线程，非阻塞）与 `awaitReady()`（等待连接就绪）
+  - `TglogClient` 先循环 `start()` 所有 Worker 再循环 `awaitReady()`，使各 Worker 的连接初始化并行进行
+  - 启动耗时从「N 个 Worker 串行累加」降为「最慢 Worker 的等待时间」
 
 ### 代码改进
 
