@@ -419,6 +419,32 @@ class TglogWorker implements Runnable {
     }
 
     /**
+     * Create a new non-blocking connection to {@code endpoint}, initiate its connect
+     * handshake, and register it in {@code connectingConns}.
+     * <p>
+     * This bundles the three steps every connection-creation site shares
+     * (construct, {@code connect(selector)}, add to {@code connectingConns}). It does
+     * NOT mark the endpoint unavailable, update counters, or set replacement
+     * references on failure — those decisions differ per call site, so the caller
+     * inspects the return value and reacts accordingly.
+     *
+     * @return the new connection if the connect handshake was initiated, or
+     *         {@code null} if construction/connect failed (an {@link IOException} was
+     *         caught and logged here).
+     */
+    private TglogConnection createConnection(InetSocketAddress endpoint) {
+        try {
+            TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
+            conn.connect(selector);
+            connectingConns.add(conn);
+            return conn;
+        } catch (IOException e) {
+            logger.warn("Worker {} failed to create connection for {}", workerId, endpoint, e);
+            return null;
+        }
+    }
+
+    /**
      * Initialize connections from initial endpoints.
      */
     private void initializeConnections() throws IOException {
@@ -440,14 +466,9 @@ class TglogWorker implements Runnable {
         for (InetSocketAddress endpoint : currentEndpoints) {
             int successfulConns = 0;
             for (int i = 0; i < connectionsPerEndpoint; i++) {
-                try {
-                    TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
-                    conn.connect(selector);
-                    connectingConns.add(conn);
+                if (createConnection(endpoint) != null) {
                     initConnCount.incrementAndGet();
                     successfulConns++;
-                } catch (IOException e) {
-                    logger.warn("Failed to create connection {}/{} for endpoint {}", (i + 1), connectionsPerEndpoint, endpoint, e);
                 }
             }
 
@@ -1509,13 +1530,8 @@ class TglogWorker implements Runnable {
                 // Try to create connections
                 int successfulConns = 0;
                 for (int i = 0; i < connectionsPerEndpoint; i++) {
-                    try {
-                        TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
-                        conn.connect(selector);
-                        connectingConns.add(conn);
+                    if (createConnection(endpoint) != null) {
                         successfulConns++;
-                    } catch (IOException e) {
-                        logger.warn("Failed to recover connection {}/{} for {}", (i + 1), connectionsPerEndpoint, addr, e);
                     }
                 }
 
@@ -1609,18 +1625,14 @@ class TglogWorker implements Runnable {
                 continue;
             }
 
-            try {
-                TglogConnection newConn = new TglogConnection(endpoint, config, metrics, workerId);
-                newConn.connect(selector);
-                connectingConns.add(newConn);
-
+            TglogConnection newConn = createConnection(endpoint);
+            if (newConn != null) {
                 // Defer removing/closing the old connection until the new one is
                 // actually CONNECTED (handled in checkConnectingConnections()).
                 newConn.setReplacingConn(oldConn);
 
                 return;
-            } catch (IOException e) {
-                logger.warn("Failed to create replacement connection for {}", endpoint, e);
+            } else {
                 markEndpointUnavailable(endpoint);
             }
         }
@@ -1811,15 +1823,10 @@ class TglogWorker implements Runnable {
 
             // Create if below target
             if (existing < connectionsPerEndpoint) {
-                try {
-                    TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
-                    conn.connect(selector);
-                    connectingConns.add(conn);
+                if (createConnection(endpoint) != null) {
                     return true;
-                } catch (IOException e) {
-                    logger.warn("Failed to supplement connection for {}", endpoint, e);
-                    markEndpointUnavailable(endpoint);
                 }
+                markEndpointUnavailable(endpoint);
             } else {
                 logger.warn("Worker {} existing connections for endpoint {} is {}, which is greater than target {}",
                         workerId, endpoint, existing, connectionsPerEndpoint);
@@ -1863,17 +1870,12 @@ class TglogWorker implements Runnable {
                 continue;
             }
 
-            try {
-                TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
-                conn.connect(selector);
-                connectingConns.add(conn);
+            if (createConnection(endpoint) != null) {
                 logger.info("Worker {} force supplement connection to {} (existing={}, hardCap={})",
                         workerId, endpoint, existing, hardCap);
                 return true;
-            } catch (IOException e) {
-                logger.error("Worker {} failed to force supplement connection for {}", workerId, endpoint, e);
-                markEndpointUnavailable(endpoint);
             }
+            markEndpointUnavailable(endpoint);
         }
 
         logger.warn("Worker {} no available endpoint for force supplement (all unavailable or at cap)", workerId);
@@ -1901,13 +1903,8 @@ class TglogWorker implements Runnable {
 
         int successfulConns = 0;
         for (int i = 0; i < connectionsPerEndpoint; i++) {
-            try {
-                TglogConnection conn = new TglogConnection(endpoint, config, metrics, workerId);
-                conn.connect(selector);
-                connectingConns.add(conn);
+            if (createConnection(endpoint) != null) {
                 successfulConns++;
-            } catch (IOException e) {
-                logger.warn("Failed to create connection {}/{} for {}", (i + 1), connectionsPerEndpoint, endpoint, e);
             }
         }
 
