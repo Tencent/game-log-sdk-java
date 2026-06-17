@@ -151,11 +151,19 @@ public class TglogClient implements AutoCloseable {
                 // Update metrics
                 metrics.setEndpointCount(endpoints.size());
 
-                // Set initial endpoints and start all workers
+                // Set initial endpoints and start all workers. Spawning all worker
+                // threads first (start) and only then waiting on each (awaitReady)
+                // makes connection initialization run in parallel across workers,
+                // rather than serializing it one worker at a time.
                 for (TglogWorker worker : workers) {
                     worker.setInitialEndpoints(endpoints);
                     startedWorkers.add(worker);
                     worker.start();
+                }
+
+                // Wait for every worker to finish establishing its initial connections.
+                for (TglogWorker worker : workers) {
+                    worker.awaitReady();
                 }
 
                 logger.info("TglogClient started with {} endpoints", endpoints.size());

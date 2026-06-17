@@ -286,6 +286,14 @@ class TglogWorker implements Runnable {
 
     /**
      * Start the worker thread.
+     * <p>
+     * This only spawns the worker thread and returns immediately; it does NOT wait
+     * for the worker to become ready. Callers must invoke {@link #awaitReady()}
+     * afterwards to block until the worker has established its initial connections.
+     * <p>
+     * Splitting start (spawn) from await (wait-for-ready) lets the client start all
+     * workers first and then wait on them, so every worker's connection
+     * initialization runs in parallel instead of one worker at a time.
      */
     public void start() {
         logger.info("Worker {} starting thread, initialEndpoints={}", workerId, (initialEndpoints == null ? "null" : initialEndpoints.size()));
@@ -295,7 +303,19 @@ class TglogWorker implements Runnable {
         this.workerThread = thread;
         thread.start();
 
-        logger.debug("Worker {} thread started, waiting for ready...", workerId);
+        logger.debug("Worker {} thread started", workerId);
+    }
+
+    /**
+     * Wait for the worker to become ready (initial connections established).
+     * <p>
+     * Must be called after {@link #start()}. Blocks until the worker has finished
+     * initializing its connections (or the connection timeout elapses).
+     *
+     * @throws RuntimeException if the worker failed to establish any connection
+     */
+    public void awaitReady() {
+        logger.debug("Worker {} waiting for ready...", workerId);
 
         // Wait for worker to be ready
         long startTime = System.currentTimeMillis();
