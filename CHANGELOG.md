@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.2] - 2026-06-17
+## [1.0.2] - 2026-06-18
 
 ### 问题修复
 
@@ -80,6 +80,14 @@
 ### 代码改进
 
 - 提取 `handleWritable()` 方法，与 `handleConnectable()`/`handleReadable()` 保持一致的代码结构
+
+- **合并不可用端点的追踪状态**：
+  - 将 `unavailableEndpoints`（时间戳）与 `endpointRetryCount`（重试次数）合并为单个 `Map<String, UnavailableState>`
+  - 时间戳与重试次数始终同步增删，消除两个 map 不一致的可能
+
+- **提取 `createConnection()` 方法**：
+  - 将「构造 `TglogConnection` + `connect(selector)` + 加入 `connectingConns`」三步连同 `IOException` 处理收口为单个方法
+  - 消除 6 处重复代码，各调用点的差异化逻辑（计数、标记不可用、设置替换引用）保留在调用方
 
 ---
 
