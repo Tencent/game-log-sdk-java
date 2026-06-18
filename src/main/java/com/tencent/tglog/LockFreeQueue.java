@@ -1,20 +1,34 @@
 package com.tencent.tglog;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
  * Lock-free bounded MPSC (Multi-Producer Single-Consumer) queue.
  *
- * This is a high-performance queue implementation using CAS operations,
- * similar to the ConcurrencyKit ring buffer used in the C version.
+ * This implementation uses the Disruptor-style per-slot sequence pattern so that
+ * the consumer never has to guess whether a slot is "empty" or merely "claimed
+ * but not yet filled". Each slot carries a sequence number that the producer
+ * publishes (with release semantics) only AFTER the item has been stored. The
+ * consumer reads the sequence (with acquire semantics) and only consumes a slot
+ * whose sequence matches the expected value.
+ *
+ * Why the previous CAS-claim-then-write design was unsafe:
+ * - A producer would CAS writeIndex first and write the item afterwards. That
+ *   left a window where writeIndex had advanced but the slot was still null.
+ * - The consumer used "slot == null" to decide the queue was empty, which is
+ *   indistinguishable from a slot that is genuinely empty. A single slow
+ *   producer could therefore stall delivery of every message behind it
+ *   (head-of-line blocking), and the size/full checks relied on cross-thread
+ *   index visibility that lazySet does not guarantee.
  *
  * Design:
- * - Multiple producers can enqueue concurrently without locks
- * - Single consumer dequeues messages
- * - Fixed capacity with power-of-2 size for efficient modulo
- * - Uses atomic operations for thread-safety
- * - Cache line padding prevents false sharing between writeIndex and readIndex
+ * - Multiple producers enqueue concurrently without locks (CAS on writeIndex).
+ * - A single consumer dequeues messages.
+ * - Fixed power-of-2 capacity for cheap masking.
+ * - Per-slot sequence provides the publication/visibility handshake.
+ * - Cache-line padding prevents false sharing between writeIndex and readIndex.
  */
 class LockFreeQueue<T> {
 
@@ -39,6 +53,10 @@ class LockFreeQueue<T> {
     private final int capacity;
     private final int mask;
     private final AtomicReferenceArray<T> buffer;
+    // Per-slot publication sequence. A slot at array index i is "ready to be
+    // consumed for ticket number n" iff sequence[i] == n + 1.
+    // Initialized so that slot i is ready to be CLAIMED (written) for ticket i.
+    private final AtomicLongArray sequence;
     // Each index lives on its own cache line to avoid false sharing between
     // producer threads (writeIndex) and the consumer thread (readIndex).
     private final PaddedAtomicLong writeIndex = new PaddedAtomicLong(0);
@@ -55,6 +73,11 @@ class LockFreeQueue<T> {
         this.capacity = roundUpToPowerOf2(capacity);
         this.mask = this.capacity - 1;
         this.buffer = new AtomicReferenceArray<>(this.capacity);
+        this.sequence = new AtomicLongArray(this.capacity);
+        // Slot i starts available for the producer holding ticket i.
+        for (int i = 0; i < this.capacity; i++) {
+            this.sequence.set(i, i);
+        }
     }
 
     /**
@@ -68,27 +91,35 @@ class LockFreeQueue<T> {
             throw new NullPointerException("Cannot enqueue null item");
         }
 
-        long currentWrite;
-        long nextWrite;
-
-        do {
-            currentWrite = writeIndex.get();
-            nextWrite = currentWrite + 1;
-
-            // Check if queue is full
-            long currentRead = readIndex.get();
-            if (nextWrite - currentRead > capacity) {
+        long ticket;
+        for (;;) {
+            ticket = writeIndex.get();
+            int index = (int) (ticket & mask);
+            // A slot is writable for this ticket only when its published
+            // sequence equals the ticket value. get() on AtomicLongArray gives
+            // volatile (acquire) semantics.
+            long seq = sequence.get(index);
+            long diff = seq - ticket;
+            if (diff == 0) {
+                // Slot is free for us; try to claim the ticket.
+                if (writeIndex.compareAndSet(ticket, ticket + 1)) {
+                    // We own this slot. Store the item, then publish the slot by
+                    // bumping its sequence to ticket + 1. The set() below has
+                    // release semantics, so the consumer that observes the new
+                    // sequence is guaranteed to also observe the item.
+                    buffer.lazySet(index, item);
+                    sequence.set(index, ticket + 1);
+                    return true;
+                }
+                // Lost the race; retry with a fresh ticket.
+            } else if (diff < 0) {
+                // The slot has not been consumed yet for the previous lap, i.e.
+                // sequence < ticket means the consumer is still behind: full.
                 return false;
             }
-
-            // Try to claim this slot
-        } while (!writeIndex.compareAndSet(currentWrite, nextWrite));
-
-        // We've claimed the slot, now write the item
-        int index = (int) (currentWrite & mask);
-        buffer.set(index, item);
-
-        return true;
+            // diff > 0: another producer already advanced past this ticket;
+            // retry to pick up the latest writeIndex.
+        }
     }
 
     /**
@@ -98,26 +129,24 @@ class LockFreeQueue<T> {
      * @return The dequeued item, or null if queue is empty
      */
     public T poll() {
-        long currentRead = readIndex.get();
-        long currentWrite = writeIndex.get();
-
-        // Check if queue is empty
-        if (currentRead >= currentWrite) {
+        long ticket = readIndex.get();
+        int index = (int) (ticket & mask);
+        // The slot is ready to be consumed only once its sequence has been
+        // published to ticket + 1 by the producer. Any other value means the
+        // slot is empty or not yet filled -> treat as empty.
+        long seq = sequence.get(index);
+        if (seq - (ticket + 1) != 0) {
             return null;
         }
 
-        int index = (int) (currentRead & mask);
         T item = buffer.get(index);
-
-        // Item might not be written yet by producer
-        if (item == null) {
-            return null;
-        }
-
-        // Clear the slot and advance read index
-        buffer.set(index, null);
-        readIndex.lazySet(currentRead + 1);
-
+        buffer.lazySet(index, null);
+        // Mark the slot free for the producer that will use it one lap later
+        // (ticket + capacity). Release semantics publish the item-cleared state.
+        sequence.set(index, ticket + capacity);
+        // Single consumer, so a plain lazySet on readIndex is enough; producers
+        // gate exclusively on per-slot sequence, not on readIndex.
+        readIndex.lazySet(ticket + 1);
         return item;
     }
 
@@ -162,19 +191,22 @@ class LockFreeQueue<T> {
     }
 
     /**
-     * Round up to the next power of 2.
+     * Round up to the next power of 2, with a minimum capacity of 2.
      */
     private static int roundUpToPowerOf2(int value) {
-        if (value <= 0) {
-            return 1;
+        if (value <= 2) {
+            return 2;
         }
-        if ((value & (value - 1)) == 0) {
-            return value; // Already power of 2
+        if (value > (1 << 30)) {
+            throw new IllegalArgumentException("Capacity too large");
         }
-        int power = 1;
-        while (power < value) {
-            power <<= 1;
-        }
-        return power;
+
+        value--;
+        value |= value >> 1;
+        value |= value >> 2;
+        value |= value >> 4;
+        value |= value >> 8;
+        value |= value >> 16;
+        return value + 1;
     }
 }

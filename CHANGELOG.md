@@ -58,6 +58,11 @@
 - **修复 close() 时 Worker 线程 join 缺失导致的指标注销竞争**：
   - 指标注销前先 join Worker 线程，防止并发竞争
 
+- **修复 LockFreeQueue 最小容量边界问题**：
+  - 队列容量向上取 2 的幂时最小返回 2，防止 capacity=1 下 sequence 状态重叠导致覆盖未消费元素
+  - 增加超大容量保护，避免容量取整时整数溢出
+  - 扩展压力测试覆盖最小容量、非 2 的幂容量和 wrap-around 场景
+
 ### 性能优化
 
 - **调整每端点连接数，提升冗余度**：
@@ -76,6 +81,9 @@
   - `TglogWorker.start()` 拆分为 `start()`（仅启动线程，非阻塞）与 `awaitReady()`（等待连接就绪）
   - `TglogClient` 先循环 `start()` 所有 Worker 再循环 `awaitReady()`，使各 Worker 的连接初始化并行进行
   - 启动耗时从「N 个 Worker 串行累加」降为「最慢 Worker 的等待时间」
+
+- **优化 LockFreeQueue 槽位写入清理开销**：
+  - 在 per-slot sequence 发布语义保持不变的前提下，buffer 写入和清理改用 `lazySet()`，降低热路径 volatile 写屏障开销
 
 ### 代码改进
 
