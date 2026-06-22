@@ -104,6 +104,7 @@ class TglogConnection {
         } catch (IOException e) {
             state = State.ERROR;
             retryCount++;
+            closeTransportResources("connection setup failure");
             throw e;
         }
     }
@@ -587,29 +588,42 @@ class TglogConnection {
     public void close() {
         state = State.DISCONNECTED;
 
-        try {
-            if (selectionKey != null) {
-                selectionKey.cancel();
-                selectionKey = null;
-            }
+        closeTransportResources("close");
 
-            if (tcpChannel != null) {
+        // Clear output buffer to prevent memory leak
+        outputBuffer.clear();
+        outputBufferSize = 0;
+
+        logger.info("Closed connection to {}", endpoint);
+    }
+
+    /**
+     * Close selector registration and transport channels without changing logical state.
+     */
+    private void closeTransportResources(String reason) {
+        if (selectionKey != null) {
+            selectionKey.cancel();
+            selectionKey = null;
+        }
+
+        if (tcpChannel != null) {
+            try {
                 tcpChannel.close();
+            } catch (IOException e) {
+                logger.warn("Error closing TCP channel to {} during {}", endpoint, reason, e);
+            } finally {
                 tcpChannel = null;
             }
+        }
 
-            if (udpChannel != null) {
+        if (udpChannel != null) {
+            try {
                 udpChannel.close();
+            } catch (IOException e) {
+                logger.warn("Error closing UDP channel to {} during {}", endpoint, reason, e);
+            } finally {
                 udpChannel = null;
             }
-
-            // Clear output buffer to prevent memory leak
-            outputBuffer.clear();
-            outputBufferSize = 0;
-
-            logger.info("Closed connection to {}", endpoint);
-        } catch (IOException e) {
-            logger.error("Error closing connection to {}", endpoint, e);
         }
     }
 
