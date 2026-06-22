@@ -109,6 +109,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setProtocol(Protocol protocol) {
+        if (protocol == null) {
+            throw new IllegalArgumentException("Protocol cannot be null");
+        }
         this.protocol = protocol;
         return this;
     }
@@ -118,6 +121,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setHost(String host) {
+        if (host == null || host.trim().isEmpty()) {
+            throw new IllegalArgumentException("Host cannot be null or empty");
+        }
         this.host = host;
         return this;
     }
@@ -127,6 +133,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setPort(int port) {
+        if (port <= 0 || port > 65535) {
+            throw new IllegalArgumentException("Port must be between 1 and 65535");
+        }
         this.port = port;
         return this;
     }
@@ -250,6 +259,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setSocketSendBufferSize(int socketSendBufferSize) {
+        if (socketSendBufferSize <= 0) {
+            throw new IllegalArgumentException("Socket send buffer size must be positive");
+        }
         this.socketSendBufferSize = socketSendBufferSize;
         return this;
     }
@@ -259,6 +271,9 @@ public class TglogConfig {
     }
 
     public TglogConfig setSocketRecvBufferSize(int socketRecvBufferSize) {
+        if (socketRecvBufferSize <= 0) {
+            throw new IllegalArgumentException("Socket receive buffer size must be positive");
+        }
         this.socketRecvBufferSize = socketRecvBufferSize;
         return this;
     }
