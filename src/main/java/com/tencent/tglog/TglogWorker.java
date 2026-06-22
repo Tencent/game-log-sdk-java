@@ -1591,6 +1591,12 @@ class TglogWorker implements Runnable {
             TglogConnection conn = connections.get(i);
 
             if (conn.isExpired()) {
+                if (hasInFlightReplacement(conn)) {
+                    logger.debug("Worker {} expired connection already has replacement in flight: {}",
+                            workerId, conn.getEndpoint());
+                    continue;
+                }
+
                 logger.info("Worker {} replacing expired connection: {}", workerId, conn.getEndpoint());
 
                 // Try to create replacement
@@ -1616,6 +1622,10 @@ class TglogWorker implements Runnable {
      * old (expired) connection keeps serving until the next replace cycle retries.
      */
     private void replaceConnection(TglogConnection oldConn) {
+        if (hasInFlightReplacement(oldConn)) {
+            return;
+        }
+
         // Find an available endpoint using round-robin
         for (int i = 0; i < currentEndpoints.size(); i++) {
             int index = (endpointReplaceIndex++ & Integer.MAX_VALUE) % currentEndpoints.size();
@@ -1636,6 +1646,15 @@ class TglogWorker implements Runnable {
                 markEndpointUnavailable(endpoint);
             }
         }
+    }
+
+    private boolean hasInFlightReplacement(TglogConnection oldConn) {
+        for (TglogConnection conn : connectingConns) {
+            if (conn.getReplacingConn() == oldConn) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
