@@ -121,6 +121,10 @@ class TglogConnection {
         // Start connection
         boolean connected = tcpChannel.connect(endpoint);
         if (connected) {
+            // Even when non-blocking connect completes immediately, register the
+            // channel so finishConnect() can install OP_READ and later buffered
+            // partial writes can enable OP_WRITE.
+            selectionKey = tcpChannel.register(selector, 0, this);
             finishConnect();
         } else {
             // Register for connect completion
