@@ -525,6 +525,9 @@ class TglogWorker implements Runnable {
             }
         }
 
+        // Mark any initial connect attempts that reached the deadline without a selector event.
+        checkConnectingConnections();
+
         // Notify waiting thread
         synchronized (readyLock) {
             readyLock.notifyAll();
@@ -724,6 +727,7 @@ class TglogWorker implements Runnable {
     private void checkConnectingConnections() {
         logger.debug("Worker {} checking {} connecting connections", workerId, connectingConns.size());
 
+        long now = System.currentTimeMillis();
         for (int i = connectingConns.size() - 1; i >= 0; i--) {
             TglogConnection conn = connectingConns.get(i);
             TglogConnection.State connState = conn.getState();
@@ -799,6 +803,30 @@ class TglogWorker implements Runnable {
                 }
 
                 logger.warn("Worker {} connection failed: {}", workerId, conn.getEndpoint());
+            } else if (connState == TglogConnection.State.CONNECTING
+                    && conn.isConnectTimedOut(now, config.getConnectionTimeout())) {
+                connectingConns.remove(i);
+
+                if (conn.getReplacingConn() != null) {
+                    logger.warn("Worker {} replacement connection timed out, keeping expired connection alive: {}",
+                            workerId, conn.getEndpoint());
+                    conn.setReplacingConn(null);
+                }
+
+                markEndpointUnavailable(conn.getEndpoint());
+                conn.close();
+                metrics.incrementErrorConn(workerId);
+
+                if (state == State.INIT) {
+                    synchronized (readyLock) {
+                        failedConnCount.incrementAndGet();
+                        logger.warn("Worker {} timeout conn count: {}/{}", workerId,
+                                failedConnCount.get(), initConnCount.get());
+                        readyLock.notifyAll();
+                    }
+                }
+
+                logger.warn("Worker {} connection timeout: {}", workerId, conn.getEndpoint());
             }
         }
     }

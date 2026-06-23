@@ -51,6 +51,7 @@ class TglogConnection {
     private SelectionKey selectionKey;
 
     private volatile State state = State.DISCONNECTED;
+    private final AtomicLong connectStartTime = new AtomicLong(0);
     private final AtomicLong connectTime = new AtomicLong(0);
     private final AtomicLong lastActiveTime = new AtomicLong(0);
     private int retryCount = 0;
@@ -91,6 +92,8 @@ class TglogConnection {
             return;
         }
 
+        connectStartTime.set(System.currentTimeMillis());
+
         try {
             if (protocol == TglogConfig.Protocol.TCP) {
                 state = State.CONNECTING;
@@ -103,6 +106,7 @@ class TglogConnection {
             }
         } catch (IOException e) {
             state = State.ERROR;
+            connectStartTime.set(0);
             retryCount++;
             closeTransportResources("connection setup failure");
             throw e;
@@ -161,8 +165,10 @@ class TglogConnection {
             if (protocol == TglogConfig.Protocol.TCP) {
                 if (tcpChannel.finishConnect()) {
                     state = State.CONNECTED;
-                    connectTime.set(System.currentTimeMillis());
-                    lastActiveTime.set(System.currentTimeMillis());
+                    long now = System.currentTimeMillis();
+                    connectStartTime.set(0);
+                    connectTime.set(now);
+                    lastActiveTime.set(now);
                     retryCount = 0;
 
                     // Calculate lifetime with jitter to avoid all connections expiring at the same time
@@ -180,8 +186,10 @@ class TglogConnection {
             } else {
                 // UDP is always "connected"
                 state = State.CONNECTED;
-                connectTime.set(System.currentTimeMillis());
-                lastActiveTime.set(System.currentTimeMillis());
+                long now = System.currentTimeMillis();
+                connectStartTime.set(0);
+                connectTime.set(now);
+                lastActiveTime.set(now);
                 retryCount = 0;
 
                 // Calculate lifetime with jitter to avoid all connections expiring at the same time
@@ -193,6 +201,7 @@ class TglogConnection {
         } catch (IOException e) {
             logger.error("Failed to finish connection to {}", endpoint, e);
             state = State.ERROR;
+            connectStartTime.set(0);
             retryCount++;
         }
         return false;
@@ -587,6 +596,7 @@ class TglogConnection {
      */
     public void close() {
         state = State.DISCONNECTED;
+        connectStartTime.set(0);
 
         closeTransportResources("close");
 
@@ -674,6 +684,14 @@ class TglogConnection {
         }
         long lifetime = System.currentTimeMillis() - connectTime.get();
         return lifetime > lifetimeWithJitterMs;
+    }
+
+    /**
+     * Check if the non-blocking connection attempt has exceeded its timeout.
+     */
+    public boolean isConnectTimedOut(long now, long timeoutMs) {
+        long startTime = connectStartTime.get();
+        return state == State.CONNECTING && startTime > 0 && now - startTime >= timeoutMs;
     }
 
     /**
