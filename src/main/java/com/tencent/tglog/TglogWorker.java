@@ -1199,46 +1199,10 @@ class TglogWorker implements Runnable {
             long sent;
             try {
                 sent = conn.send(buffers);
-            } catch (PartialWriteException e) {
-                // The connection committed some bytes to the kernel and then died. Because
-                // the protocol is request-only (no ACK) we resend at WHOLE-MESSAGE
-                // boundaries: messages fully committed are treated as best-effort delivered
-                // (notified success + dropped); the straddling message and everything after
-                // it are resent intact on the next connection. This guarantees we never
-                // write the second half of a message to a different connection (no frame
-                // corruption) and never duplicate an already-committed whole message.
-                int delivered = currentBatch.advancePastCommitted(e.getCommittedBytes());
-                for (int i = 0; i < delivered; i++) {
-                    metrics.incrementSucceededMsg();
-                }
-                logger.error("Worker {} TCP partial-write on connection {} ({} bytes committed, "
-                                + "{} msgs best-effort delivered), resending remainder on next conn",
-                        workerId, conn.getEndpoint(), e.getCommittedBytes(), delivered, e);
-                handleConnectionError(conn);
-                tryCount++;
-
-                if (currentBatch.isEmpty()) {
-                    // The whole batch was committed on the dead connection; nothing left.
-                    return SendResult.ok();
-                }
-
-                if (tryCount < maxTries) {
-                    conn = getConnection();
-                    if (conn == null) {
-                        return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
-                    }
-                    // Re-derive buffers: advancePastCommitted() trimmed/rewound the batch's
-                    // cached buffers so only the remaining messages are sent next.
-                    buffers = currentBatch.prepareForSend();
-                    continue;
-                }
-
-                return SendResult.error(TglogErrorCode.SEND_FAILED);
             } catch (IOException e) {
-                // A connection that fails before committing any batch bytes (e.g. the
-                // initial flush of a stale outputBuffer, or a write that wrote 0 bytes then
-                // threw) throws a plain IOException. No batch bytes were committed, so resend
-                // the whole batch on the next connection after rewinding its buffers.
+                // A connection that fails mid-write (RST/EPIPE/etc.) throws instead of
+                // returning -1. Treat it the same as sent < 0: drop this connection and
+                // try the next one, so a single bad connection does not fail the batch.
                 logger.error("Worker {} TCP send error on connection {}, trying next connection",
                         workerId, conn.getEndpoint(), e);
                 handleConnectionError(conn);
@@ -1249,7 +1213,6 @@ class TglogWorker implements Runnable {
                     if (conn == null) {
                         return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
                     }
-                    buffers = currentBatch.prepareForSend();
                     continue;
                 }
 
@@ -1268,7 +1231,6 @@ class TglogWorker implements Runnable {
                     if (conn == null) {
                         return SendResult.error(TglogErrorCode.NO_AVAILABLE_CONN);
                     }
-                    buffers = currentBatch.prepareForSend();
                     continue;
                 }
 
