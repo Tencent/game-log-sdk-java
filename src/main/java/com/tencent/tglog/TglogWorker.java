@@ -2340,8 +2340,8 @@ class TglogWorker implements Runnable {
         if (message.getCallback() != null) {
             try {
                 message.getCallback().onCompletion(message.getPayload(), exception);
-            } catch (Exception e) {
-                // Ignore callback exceptions
+            } catch (Throwable t) {
+                // Ignore callback failures, including Error, so cleanup can finish.
             }
         }
     }
