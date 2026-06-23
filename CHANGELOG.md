@@ -5,9 +5,34 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.2] - 2026-06-18
+## [1.0.2] - 2026-06-23
 
 ### 问题修复
+
+- **修复 TCP 立即连接成功时未注册 Selector 的问题**：
+  - 非阻塞 TCP `connect()` 立即成功时也注册到 `Selector`
+  - 确保后续可正确安装 `OP_READ`，并在分片写入时注册 `OP_WRITE`
+
+- **修复 CONNECTING 连接超时后未清理的问题**：
+  - 记录非阻塞连接发起时间，周期性清理超过 `connectionTimeout` 的连接
+  - 初始化阶段超时连接会计入失败数，避免启动等待遗漏
+  - 替换连接超时时保留旧连接继续服务，等待后续恢复周期重试
+
+- **修复过期连接重复创建替换连接的问题**：
+  - 检查进行中的 replacement，避免为同一个旧连接创建多个替换连接
+  - 防止 `connectingConns` 持续增长和连接数异常膨胀
+
+- **修复连接创建失败时的通道资源泄漏**：
+  - 连接 setup 任一步骤失败时，主动取消选择键并关闭已打开的 TCP/UDP channel
+  - 关闭资源时逐项处理，避免单个关闭异常影响其他资源清理
+
+- **修复可变配置 setter 缺少校验的问题**：
+  - `setProtocol()`、`setHost()`、`setPort()` 现在拒绝非法值
+  - Socket 发送/接收缓冲区大小 setter 现在要求正数
+
+- **修复关闭清理阶段用户回调异常可能中断清理的问题**：
+  - shutdown 失败回调路径改为捕获 `Throwable`
+  - 避免用户回调抛出 `Error` 时中断 Worker 清理流程
 
 - **修复 TCP 分片写入失败时的消息边界问题**：
   - 修复 gathering write 缓冲区状态在部分提交后未正确重置的问题
